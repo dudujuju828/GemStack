@@ -3,6 +3,9 @@ project(GemStack)
 
 set(CMAKE_CXX_STANDARD 20)
 
+# Include directories
+include_directories(include)
+
 include(FetchContent)
 FetchContent_Declare(
   googletest
@@ -13,10 +16,11 @@ set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(googletest)
 
 # Library for core logic (shared between main app and tests)
-add_library(GemStackCore GemStackCore.cpp)
+add_library(GemStackCore src/GemStackCore.cpp)
+target_include_directories(GemStackCore PUBLIC include)
 
 # Main executable
-add_executable(GemStack main.cpp)
+add_executable(GemStack src/main.cpp)
 target_link_libraries(GemStack PRIVATE GemStackCore)
 
 # Test executable

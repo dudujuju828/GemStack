@@ -9,7 +9,7 @@
 #include <atomic>
 #include <chrono>
 
-#include "GemStackCore.h"
+#include <GemStackCore.h>
 
 void worker() {
     while (true) {

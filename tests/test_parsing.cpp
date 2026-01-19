@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
 #include <fstream>
 #include <cstdio>
-#include "../GemStackCore.h"
+#include <GemStackCore.h>
 
 // Helper to reset the queue before each test
 void ClearQueue() {
