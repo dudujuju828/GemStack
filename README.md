@@ -4,12 +4,15 @@ GemStack is a C++ automation wrapper for the [Gemini CLI](https://github.com/goo
 
 The application allows users to define a series of commands in a file for batch processing, or to input commands interactively. This facilitates automated, high-volume interaction with the Gemini CLI.
 
+**Note:** GemStack automatically runs Gemini in `--yolo` mode, meaning it will auto-approve tool calls without user confirmation.
+
 ## Features
 
 - **Batch Processing**: Execute a list of pre-defined tasks from a text file.
 - **Queue System**: Ensures sequential command execution for stable output.
 - **Interactive Mode**: Append commands to the processing queue during runtime.
 - **Gemini CLI Integration**: utilizes the underlying Node.js-based Gemini CLI for all AI interactions.
+- **Auto-Approval**: Runs in YOLO mode by default for uninterrupted automation.
 
 ## Prerequisites
 
@@ -56,35 +59,21 @@ Ensure the following dependencies are installed:
 The `GemStackQueue.txt` file defines the commands to be executed. Place this file in the project root directory (or the same directory as the executable).
 
 #### Syntax
-- **Delimiters**: Commands must be enclosed between `GemStackSTART` and `GemStackEND`.
-- **Formatting**: Delimiters can be on the same line or separate lines.
-- **Newlines**: Multi-line text within a block is joined into a single command string; newlines are converted to spaces.
+- **Structure**: Enclose all commands within a single `GemStackSTART` and `GemStackEND` block.
+- **Commands**: Each line inside the block is treated as a separate command to be executed.
+- **Blank Lines**: Empty lines are ignored.
 
-#### Configuration Examples
+#### Configuration Example
 
-**Basic Prompt**
+You can queue as many prompts or CLI arguments as needed within the block:
+
 ```text
-GemStackSTART prompt "Tell me a joke about C++" GemStackEND
-```
-
-**Multi-line Prompt**
-```text
-GemStackSTART 
-prompt "Refactor the following code to be cleaner:
-int x = 5; if(x==5){return;}"
+GemStackSTART
+prompt "Tell me a joke about C++"
+prompt "Explain how shared_ptr works"
+--version
+--help
 GemStackEND
-```
-
-**Using CLI Flags**
-```text
-GemStackSTART prompt "Explain quantum computing" --model gemini-1.5-pro --system "You are a physics professor" GemStackEND
-```
-
-**Batching Tasks**
-```text
-GemStackSTART prompt "Write a poem about rust" GemStackEND
-GemStackSTART prompt "Convert that poem to python code" GemStackEND
-GemStackSTART --help GemStackEND
 ```
 
 ### Execution

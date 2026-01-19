@@ -9,75 +9,7 @@
 #include <atomic>
 #include <chrono>
 
-std::queue<std::string> commandQueue;
-std::mutex queueMutex;
-std::condition_variable queueCV;
-bool running = true;
-std::atomic<bool> isBusy{false};
-
-bool loadCommandsFromFile(const std::string& filename) {
-    std::ifstream file(filename);
-    if (!file.is_open()) {
-        std::cout << "[GemStack] " << filename << " not found. Skipping file input." << std::endl;
-        return false;
-    }
-
-    std::string line;
-    std::string currentCommand;
-    bool collecting = false;
-    bool commandsLoaded = false;
-
-    while (std::getline(file, line)) {
-        size_t startPos = line.find("GemStackSTART");
-        size_t endPos = line.find("GemStackEND");
-
-        if (startPos != std::string::npos) {
-            collecting = true;
-            currentCommand = ""; 
-            
-            if (endPos != std::string::npos && endPos > startPos) {
-                // Single line case
-                currentCommand = line.substr(startPos + 13, endPos - (startPos + 13));
-                
-                {
-                    std::lock_guard<std::mutex> lock(queueMutex);
-                    commandQueue.push(currentCommand);
-                    commandsLoaded = true;
-                }
-                queueCV.notify_one();
-                std::cout << "[GemStack] File command queued from " << filename << std::endl;
-                collecting = false;
-                continue; 
-            }
-            
-            std::string afterStart = line.substr(startPos + 13);
-            if (!afterStart.empty()) {
-                currentCommand += afterStart;
-            }
-        }
-        else if (collecting && endPos != std::string::npos) {
-            std::string beforeEnd = line.substr(0, endPos);
-            if (!beforeEnd.empty()) {
-                if (!currentCommand.empty()) currentCommand += " ";
-                currentCommand += beforeEnd;
-            }
-            
-            {
-                std::lock_guard<std::mutex> lock(queueMutex);
-                commandQueue.push(currentCommand);
-                commandsLoaded = true;
-            }
-            queueCV.notify_one();
-            std::cout << "[GemStack] File command queued from " << filename << std::endl;
-            collecting = false;
-        }
-        else if (collecting) {
-            if (!currentCommand.empty()) currentCommand += " ";
-            currentCommand += line;
-        }
-    }
-    return commandsLoaded;
-}
+#include "GemStackCore.h"
 
 void worker() {
     while (true) {
@@ -98,9 +30,8 @@ void worker() {
         // Execute the command
         std::cout << "[GemStack] Processing: " << command << std::endl;
         
-        // Construct the full command to run gemini-cli
-        // Assuming we are running from the root where gemini-cli folder exists
-        std::string fullCommand = "node gemini-cli/scripts/start.js " + command;
+        // Construct the full command to run gemini-cli with YOLO mode enabled
+        std::string fullCommand = "node gemini-cli/scripts/start.js --yolo " + command;
         
         int result = std::system(fullCommand.c_str());
         

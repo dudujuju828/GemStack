@@ -1,4 +1,4 @@
-GemStackSTART --help GemStackEND
 GemStackSTART
 --version
+--help
 GemStackEND
