@@ -1,4 +1,6 @@
 GemStackSTART
---version
---help
+prompt "Initialize a new Next.js project with Tailwind CSS in the current directory. Name it 'my-web-app'."
+prompt "In 'my-web-app', create a responsive landing page for a professional consulting firm. Use a clean, modern aesthetic with a primary color of indigo."
+prompt "Create a 'Services' component that uses a grid layout to display three core consulting services with icons and descriptions."
+prompt "Add a 'Contact' section with a functional form and validation logic."
 GemStackEND
