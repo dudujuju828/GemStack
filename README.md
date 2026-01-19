@@ -27,7 +27,7 @@ Before you start, ensure you have the following installed:
 1.  **Clone the Repository**
     Make sure to clone with submodules to get the Gemini CLI:
     ```bash
-    git clone --recurse-submodules https://github.com/yourusername/GemStack.git
+    git clone --recurse-submodules https://github.com/dudujuju828/GemStack.git
     cd GemStack
     ```
     *If you already cloned without submodules, run:*
