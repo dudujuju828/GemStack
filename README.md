@@ -55,30 +55,44 @@ Before you start, ensure you have the following installed:
 
 ## 🎮 Usage
 
-### 1. The Queue File (`GemStackQueue.txt`)
+### 📝 Guide: Writing GemStackQueue.txt
 
-Create a file named `GemStackQueue.txt` in the root directory (next to the executable). This file contains the prompts you want to run.
+The `GemStackQueue.txt` file is the heart of GemStack. It tells the tool what to do. Place this file in the same directory where you run the executable.
 
-**Syntax:**
-Wrap your commands between `GemStackSTART` and `GemStackEND`.
+#### Syntax Rules
+1.  **Delimiters**: Every command must be enclosed between `GemStackSTART` and `GemStackEND`.
+2.  **Separation**: You can place `GemStackSTART` and `GemStackEND` on the same line or separate lines.
+3.  **Newlines**: Text spanning multiple lines will be joined into a single command string (newlines become spaces).
 
-**Single Line Example:**
+#### Examples
+
+**1. Basic Prompt**
+Simple one-line command to ask Gemini something.
 ```text
-GemStackSTART --help GemStackEND
+GemStackSTART prompt "Tell me a joke about C++" GemStackEND
 ```
 
-**Multi-Line Example (Great for long prompts):**
+**2. Multi-line Prompt (Cleaner formatting)**
+Use multiple lines for readability. GemStack will join them with spaces before sending to the CLI.
 ```text
-GemStackSTART
-Write a comprehensive guide on how to bake sourdough bread, 
-including details on maintaining a starter and baking temperatures.
+GemStackSTART 
+prompt "Refactor the following code to be cleaner:
+int x = 5; if(x==5){return;}"
 GemStackEND
 ```
 
-**Batch Example:**
+**3. Using CLI Flags**
+You can pass any standard Gemini CLI flags inside the block.
 ```text
-GemStackSTART prompt "Refactor main.cpp to be more thread-safe" GemStackEND
-GemStackSTART prompt "Write a unit test for the queue system" GemStackEND
+GemStackSTART prompt "Explain quantum computing" --model gemini-1.5-pro --system "You are a physics professor" GemStackEND
+```
+
+**4. Batching Multiple Tasks**
+Stack as many tasks as you like. They run one after another.
+```text
+GemStackSTART prompt "Write a poem about rust" GemStackEND
+GemStackSTART prompt "Convert that poem to python code" GemStackEND
+GemStackSTART --help GemStackEND
 ```
 
 ### 2. Running GemStack
