@@ -3,6 +3,11 @@ project(GemStack)
 
 set(CMAKE_CXX_STANDARD 20)
 
+# Output executable to project root directory
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR})
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG ${CMAKE_SOURCE_DIR})
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE ${CMAKE_SOURCE_DIR})
+
 # Include directories
 include_directories(include)
 

@@ -1,3 +1,41 @@
-.gemini-cli
-.claude
-build
+# Build directories
+build/
+out/
+cmake-build-*/
+
+# Build outputs
+*.exe
+*.pdb
+*.obj
+*.o
+*.lib
+*.a
+*.so
+*.dll
+*.dylib
+
+# IDE and editor files
+.vs/
+.vscode/
+*.suo
+*.user
+*.sln.docstates
+.idea/
+*.swp
+*.swo
+*~
+
+# CMake generated
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+compile_commands.json
+
+# Tool directories
+.claude/
+.gemini-cli/
+
+# OS files
+.DS_Store
+Thumbs.db

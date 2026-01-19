@@ -11,8 +11,10 @@ The application allows users to define a series of commands in a file for batch 
 - **Batch Processing**: Execute a list of pre-defined tasks from a text file.
 - **Queue System**: Ensures sequential command execution for stable output.
 - **Interactive Mode**: Append commands to the processing queue during runtime.
+- **Reflective Mode**: AI continuously improves its work by generating its own follow-up prompts.
 - **Gemini CLI Integration**: utilizes the underlying Node.js-based Gemini CLI for all AI interactions.
 - **Auto-Approval**: Runs in YOLO mode by default for uninterrupted automation.
+- **Automatic Model Fallback**: Automatically downgrades to a less capable model when rate limits are hit.
 
 ## Prerequisites
 
@@ -101,22 +103,63 @@ GemStackEND
 
 ### Execution
 
-Run the executable from the project root to ensure it can locate the `gemini-cli` scripts and the `GemStackQueue.txt` file.
+The executable is built directly in the project root directory for convenience.
 
 **Windows:**
 ```powershell
-.\build\Debug\GemStack.exe
-# Or depending on configuration:
-.\build\GemStack.exe
+.\GemStack.exe
 ```
 
 **Linux/macOS:**
 ```bash
-./build/GemStack
+./GemStack
 ```
 
 ### Modes of Operation
 
 1.  **Batch Mode**: Upon launch, GemStack immediately processes all commands found in `GemStackQueue.txt`.
 2.  **Interactive Mode**: Users can manually type commands into the console to append them to the queue.
-3.  **Termination**: The application will automatically exit after processing all file-based commands. in interactive mode, type `exit` or `quit` to close the application.
+3.  **Reflective Mode**: AI iteratively improves its work by generating follow-up prompts (see below).
+4.  **Termination**: The application will automatically exit after processing all file-based commands. In interactive mode, type `exit` or `quit` to close the application.
+
+### Reflective Mode
+
+Reflective mode enables autonomous, iterative development where the AI continuously improves its work by asking itself what to do next.
+
+**Usage:**
+```powershell
+# Windows
+.\GemStack.exe --reflect "Your initial prompt here"
+
+# With custom iteration limit (default is 5)
+.\GemStack.exe --reflect "Build a calculator app" --iterations 10
+```
+
+```bash
+# Linux/macOS
+./GemStack --reflect "Your initial prompt here"
+./GemStack --reflect "Build a calculator app" --iterations 10
+```
+
+**How it works:**
+1. GemStack executes your initial prompt
+2. After completion, it asks the AI: "What is the single most impactful next step to improve or extend this work?"
+3. The AI's response becomes the next prompt
+4. This cycle repeats until the iteration limit is reached
+
+**Example:**
+```powershell
+.\GemStack.exe --reflect "Create a basic HTML webpage with a greeting" --iterations 3
+```
+
+This might produce iterations like:
+- Iteration 1: Creates the basic HTML page
+- Iteration 2: AI decides to add CSS styling
+- Iteration 3: AI decides to add JavaScript interactivity
+
+**Command Line Options:**
+| Option | Description |
+|--------|-------------|
+| `--reflect <prompt>` | Activate reflective mode with the given initial prompt |
+| `--iterations <n>` | Set maximum iterations (default: 5) |
+| `--help` | Display help message |
