@@ -23,7 +23,30 @@ Ensure the following dependencies are installed:
 - **Node.js** (Required for the underlying Gemini CLI)
 - **Git**
 
-## Installation
+## Quick Start
+
+After cloning the repository, run the build script to automatically set up everything:
+
+**Windows:**
+```powershell
+git clone --recurse-submodules https://github.com/dudujuju828/GemStack.git
+cd GemStack
+.\build.bat
+```
+
+**Linux/macOS:**
+```bash
+git clone --recurse-submodules https://github.com/dudujuju828/GemStack.git
+cd GemStack
+chmod +x build.sh
+./build.sh
+```
+
+The build script handles submodule initialization, Gemini CLI setup, and CMake configuration automatically.
+
+## Manual Installation
+
+If you prefer to set up manually:
 
 1.  **Clone the Repository**
     Clone the repository including submodules to ensure the Gemini CLI source is retrieved:
