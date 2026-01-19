@@ -1,79 +1,73 @@
-# GemStack 💎🥞
+# GemStack
 
-**The Ultimate Vibe-Coding Tool**
+GemStack is a C++ automation wrapper for the [Gemini CLI](https://github.com/google-gemini/gemini-cli). It enables the execution of sequential prompts and tasks ("tickets") via a queue system.
 
-GemStack is a powerful automation wrapper built on top of [Gemini CLI](https://github.com/google-gemini/gemini-cli). It allows you to queue up a series of complex prompts and tasks ("tickets") that will be executed sequentially. 
+The application allows users to define a series of commands in a file for batch processing, or to input commands interactively. This facilitates automated, high-volume interaction with the Gemini CLI.
 
-Set up your queue, run GemStack, and walk away. Come back hours later to find all your tasks completed. It's the ultimate tool for asynchronous, high-volume AI interaction.
+## Features
 
-## 🚀 Features
+- **Batch Processing**: Execute a list of pre-defined tasks from a text file.
+- **Queue System**: Ensures sequential command execution for stable output.
+- **Interactive Mode**: Append commands to the processing queue during runtime.
+- **Gemini CLI Integration**: utilizes the underlying Node.js-based Gemini CLI for all AI interactions.
 
-- **Batch Processing**: Define a list of tasks in a text file and let GemStack churn through them one by one.
-- **Queue System**: Commands are processed sequentially to ensure stability and orderly output.
-- **Interactive Mode**: Add new commands to the queue on the fly while the stack is already processing.
-- **Built on Gemini CLI**: Leverages the full power of the Gemini CLI for robust AI interactions.
+## Prerequisites
 
-## 📋 Prerequisites
+Ensure the following dependencies are installed:
 
-Before you start, ensure you have the following installed:
-
-- **C++ Compiler** (supporting C++17 or later)
-- **CMake** (3.10+)
-- **Node.js** (Required to run the underlying Gemini CLI)
+- **C++ Compiler** (C++20 compliant)
+- **CMake** (Version 3.20 or later)
+- **Node.js** (Required for the underlying Gemini CLI)
 - **Git**
 
-## 🛠️ Installation & Setup
+## Installation
 
 1.  **Clone the Repository**
-    Make sure to clone with submodules to get the Gemini CLI:
+    Clone the repository including submodules to ensure the Gemini CLI source is retrieved:
     ```bash
     git clone --recurse-submodules https://github.com/dudujuju828/GemStack.git
     cd GemStack
     ```
-    *If you already cloned without submodules, run:*
+    If the repository was cloned without submodules, initialize them manually:
     ```bash
     git submodule update --init --recursive
     ```
 
 2.  **Setup Gemini CLI**
-    GemStack relies on the nested `gemini-cli`. You need to install its dependencies:
+    Install dependencies and build the nested `gemini-cli`:
     ```bash
     cd gemini-cli
     npm install
-    npm run build # Build the CLI packages
+    npm run build
     cd ..
     ```
 
 3.  **Build GemStack**
-    Use CMake to build the C++ application:
+    Configure and build the C++ application using CMake:
     ```bash
-    mkdir build
-    cd build
-    cmake ..
-    cmake --build .
+    cmake -B build -S .
+    cmake --build build
     ```
 
-## 🎮 Usage
+## Usage
 
-### 📝 Guide: Writing GemStackQueue.txt
+### Configuration: GemStackQueue.txt
 
-The `GemStackQueue.txt` file is the heart of GemStack. It tells the tool what to do. Place this file in the same directory where you run the executable.
+The `GemStackQueue.txt` file defines the commands to be executed. Place this file in the project root directory (or the same directory as the executable).
 
-#### Syntax Rules
-1.  **Delimiters**: Every command must be enclosed between `GemStackSTART` and `GemStackEND`.
-2.  **Separation**: You can place `GemStackSTART` and `GemStackEND` on the same line or separate lines.
-3.  **Newlines**: Text spanning multiple lines will be joined into a single command string (newlines become spaces).
+#### Syntax
+- **Delimiters**: Commands must be enclosed between `GemStackSTART` and `GemStackEND`.
+- **Formatting**: Delimiters can be on the same line or separate lines.
+- **Newlines**: Multi-line text within a block is joined into a single command string; newlines are converted to spaces.
 
-#### Examples
+#### Configuration Examples
 
-**1. Basic Prompt**
-Simple one-line command to ask Gemini something.
+**Basic Prompt**
 ```text
 GemStackSTART prompt "Tell me a joke about C++" GemStackEND
 ```
 
-**2. Multi-line Prompt (Cleaner formatting)**
-Use multiple lines for readability. GemStack will join them with spaces before sending to the CLI.
+**Multi-line Prompt**
 ```text
 GemStackSTART 
 prompt "Refactor the following code to be cleaner:
@@ -81,27 +75,27 @@ int x = 5; if(x==5){return;}"
 GemStackEND
 ```
 
-**3. Using CLI Flags**
-You can pass any standard Gemini CLI flags inside the block.
+**Using CLI Flags**
 ```text
 GemStackSTART prompt "Explain quantum computing" --model gemini-1.5-pro --system "You are a physics professor" GemStackEND
 ```
 
-**4. Batching Multiple Tasks**
-Stack as many tasks as you like. They run one after another.
+**Batching Tasks**
 ```text
 GemStackSTART prompt "Write a poem about rust" GemStackEND
 GemStackSTART prompt "Convert that poem to python code" GemStackEND
 GemStackSTART --help GemStackEND
 ```
 
-### 2. Running GemStack
+### Execution
 
-Run the built executable from the root directory so it can find the `gemini-cli` script and your queue file.
+Run the executable from the project root to ensure it can locate the `gemini-cli` scripts and the `GemStackQueue.txt` file.
 
 **Windows:**
 ```powershell
 .\build\Debug\GemStack.exe
+# Or depending on configuration:
+.\build\GemStack.exe
 ```
 
 **Linux/macOS:**
@@ -109,12 +103,8 @@ Run the built executable from the root directory so it can find the `gemini-cli`
 ./build/GemStack
 ```
 
-### 3. Interactive Mode
+### Modes of Operation
 
-Once running, GemStack will process everything in `GemStackQueue.txt`. You can also manually type commands into the console window to add them to the end of the queue.
-
-Type `exit` or `quit` to finish processing the queue and close the application.
-
-## 🤝 Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
+1.  **Batch Mode**: Upon launch, GemStack immediately processes all commands found in `GemStackQueue.txt`.
+2.  **Interactive Mode**: Users can manually type commands into the console to append them to the queue.
+3.  **Termination**: The application will automatically exit after processing all file-based commands. in interactive mode, type `exit` or `quit` to close the application.
