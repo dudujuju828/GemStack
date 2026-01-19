@@ -9,6 +9,40 @@ std::condition_variable queueCV;
 bool running = true;
 std::atomic<bool> isBusy{false};
 
+// Model fallback list - ordered from best to least-best
+std::vector<std::string> modelFallbackList = {
+    "gemini-3-pro-preview",
+    "gemini-3-flash-preview",
+    "gemini-2.5-pro",
+    "gemini-2.0-flash",
+    "gemini-1.5-pro",
+    "gemini-1.5-flash"
+};
+std::atomic<size_t> currentModelIndex{0};
+
+std::string getCurrentModel() {
+    size_t idx = currentModelIndex.load();
+    if (idx < modelFallbackList.size()) {
+        return modelFallbackList[idx];
+    }
+    return modelFallbackList.back();
+}
+
+bool downgradeModel() {
+    size_t idx = currentModelIndex.load();
+    if (idx + 1 < modelFallbackList.size()) {
+        currentModelIndex.store(idx + 1);
+        std::cout << "[GemStack] Model exhausted. Downgrading to: " << getCurrentModel() << std::endl;
+        return true;
+    }
+    std::cerr << "[GemStack] All models exhausted. No fallback available." << std::endl;
+    return false;
+}
+
+void resetModelToTop() {
+    currentModelIndex.store(0);
+}
+
 // Helper to trim whitespace from both ends
 std::string trim(const std::string& str) {
     size_t first = str.find_first_not_of(" \t\n\r");
