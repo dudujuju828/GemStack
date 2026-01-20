@@ -43,6 +43,64 @@ void resetModelToTop() {
     currentModelIndex.store(0);
 }
 
+// Escape a string for safe shell usage
+std::string escapeForShell(const std::string& input) {
+    std::string escaped;
+    escaped.reserve(input.size() * 2);
+
+    for (char c : input) {
+        switch (c) {
+            // Escape shell metacharacters
+            case '"':  escaped += "\\\""; break;
+            case '\\': escaped += "\\\\"; break;
+            case '$':  escaped += "\\$"; break;
+            case '`':  escaped += "\\`"; break;
+            case '!':  escaped += "\\!"; break;
+            // Block dangerous characters entirely
+            case ';':
+            case '&':
+            case '|':
+            case '<':
+            case '>':
+            case '\n':
+            case '\r':
+                escaped += ' ';  // Replace with space
+                break;
+            default:
+                escaped += c;
+                break;
+        }
+    }
+    return escaped;
+}
+
+// Check if output indicates model exhaustion/rate limit
+bool isModelExhausted(const std::string& output) {
+    const std::vector<std::string> exhaustionPatterns = {
+        "rate limit",
+        "Rate limit",
+        "RATE_LIMIT",
+        "quota exceeded",
+        "Quota exceeded",
+        "QUOTA_EXCEEDED",
+        "resource exhausted",
+        "Resource exhausted",
+        "RESOURCE_EXHAUSTED",
+        "too many requests",
+        "Too many requests",
+        "429",
+        "limit reached",
+        "exhausted"
+    };
+
+    for (const auto& pattern : exhaustionPatterns) {
+        if (output.find(pattern) != std::string::npos) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // Helper to trim whitespace from both ends
 std::string trim(const std::string& str) {
     size_t first = str.find_first_not_of(" \t\n\r");

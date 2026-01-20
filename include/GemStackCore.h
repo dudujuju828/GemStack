@@ -18,9 +18,21 @@ extern std::atomic<bool> isBusy;
 extern std::vector<std::string> modelFallbackList;
 extern std::atomic<size_t> currentModelIndex;
 
+// File parsing
 bool loadCommandsFromFile(const std::string& filename);
+
+// Model management
 std::string getCurrentModel();
 bool downgradeModel();
 void resetModelToTop();
+
+// Security utilities
+std::string escapeForShell(const std::string& input);
+
+// Rate limit detection
+bool isModelExhausted(const std::string& output);
+
+// String utilities
+std::string trim(const std::string& str);
 
 #endif // GEMSTACK_CORE_H

@@ -1,5 +1,6 @@
 #include <iostream>
 #include <fstream>
+#include <sstream>
 #include <queue>
 #include <string>
 #include <thread>
@@ -24,6 +25,100 @@
 #include <sys/ioctl.h>
 #include <unistd.h>
 #endif
+
+// Reflection mode prompt log
+struct ReflectionLogEntry {
+    int iteration;
+    std::string prompt;
+    std::string summary;
+    bool success;
+};
+
+std::vector<ReflectionLogEntry> reflectionLog;
+const std::string REFLECTION_LOG_FILE = "GemStackReflectionLog.txt";
+
+// Write reflection log to file for persistence and debugging
+void writeReflectionLogToFile(const std::string& initialGoal) {
+    std::ofstream logFile(REFLECTION_LOG_FILE);
+    if (!logFile.is_open()) {
+        std::cerr << "[GemStack] Warning: Could not write reflection log file." << std::endl;
+        return;
+    }
+
+    logFile << "================================================================================\n";
+    logFile << "GEMSTACK REFLECTION LOG\n";
+    logFile << "================================================================================\n\n";
+    logFile << "INITIAL GOAL: " << initialGoal << "\n\n";
+    logFile << "--------------------------------------------------------------------------------\n\n";
+
+    for (const auto& entry : reflectionLog) {
+        logFile << "ITERATION " << entry.iteration << " [" << (entry.success ? "SUCCESS" : "FAILED") << "]\n";
+        logFile << "PROMPT: " << entry.prompt << "\n";
+        if (!entry.summary.empty()) {
+            logFile << "SUMMARY: " << entry.summary << "\n";
+        }
+        logFile << "\n--------------------------------------------------------------------------------\n\n";
+    }
+
+    logFile.close();
+}
+
+// Build context string from reflection log for injection into prompts
+std::string buildReflectionContext(const std::string& initialGoal) {
+    if (reflectionLog.empty()) {
+        return "";
+    }
+
+    std::string context = "CONTEXT FROM PREVIOUS ITERATIONS:\n";
+    context += "Initial Goal: " + initialGoal + "\n\n";
+    context += "Work completed so far:\n";
+
+    for (const auto& entry : reflectionLog) {
+        context += "- Iteration " + std::to_string(entry.iteration) + ": " + entry.prompt;
+        if (!entry.summary.empty()) {
+            context += " -> " + entry.summary;
+        }
+        context += "\n";
+    }
+
+    context += "\nBuild upon this previous work. Do not repeat completed tasks.\n\n";
+    return context;
+}
+
+// Extract a brief summary from command output (first meaningful line or truncated)
+std::string extractOutputSummary(const std::string& output, size_t maxLength = 200) {
+    if (output.empty()) {
+        return "Completed";
+    }
+
+    // Find first non-empty line that isn't a GemStack status message
+    std::istringstream stream(output);
+    std::string line;
+    std::string summary;
+
+    while (std::getline(stream, line)) {
+        // Skip empty lines and GemStack status messages
+        if (line.empty()) continue;
+        if (line.find("[GemStack]") != std::string::npos) continue;
+        if (line.find("========") != std::string::npos) continue;
+        if (line.find("--------") != std::string::npos) continue;
+
+        // Found a meaningful line
+        summary = line;
+        break;
+    }
+
+    if (summary.empty()) {
+        summary = "Completed";
+    }
+
+    // Truncate if too long
+    if (summary.length() > maxLength) {
+        summary = summary.substr(0, maxLength - 3) + "...";
+    }
+
+    return summary;
+}
 
 // Animation control
 std::atomic<bool> animationRunning{false};
@@ -127,34 +222,6 @@ void stopAnimation() {
     if (animationThread.joinable()) {
         animationThread.join();
     }
-}
-
-// Check if output indicates model exhaustion/rate limit
-bool isModelExhausted(const std::string& output) {
-    // Common rate limit / quota exhaustion error patterns
-    const std::vector<std::string> exhaustionPatterns = {
-        "rate limit",
-        "Rate limit",
-        "RATE_LIMIT",
-        "quota exceeded",
-        "Quota exceeded",
-        "QUOTA_EXCEEDED",
-        "resource exhausted",
-        "Resource exhausted",
-        "RESOURCE_EXHAUSTED",
-        "too many requests",
-        "Too many requests",
-        "429",
-        "limit reached",
-        "exhausted"
-    };
-
-    for (const auto& pattern : exhaustionPatterns) {
-        if (output.find(pattern) != std::string::npos) {
-            return true;
-        }
-    }
-    return false;
 }
 
 #ifdef _WIN32
@@ -289,37 +356,6 @@ std::pair<int, std::string> executeWithOutput(const std::string& command) {
 }
 #endif
 
-// Escape a string for safe shell usage
-std::string escapeForShell(const std::string& input) {
-    std::string escaped;
-    escaped.reserve(input.size() * 2);
-
-    for (char c : input) {
-        switch (c) {
-            // Escape shell metacharacters
-            case '"':  escaped += "\\\""; break;
-            case '\\': escaped += "\\\\"; break;
-            case '$':  escaped += "\\$"; break;
-            case '`':  escaped += "\\`"; break;
-            case '!':  escaped += "\\!"; break;
-            // Block dangerous characters entirely
-            case ';':
-            case '&':
-            case '|':
-            case '<':
-            case '>':
-            case '\n':
-            case '\r':
-                escaped += ' ';  // Replace with space
-                break;
-            default:
-                escaped += c;
-                break;
-        }
-    }
-    return escaped;
-}
-
 // Execute a single prompt and return the result
 std::pair<bool, std::string> executeSinglePrompt(const std::string& prompt) {
     bool success = false;
@@ -359,7 +395,20 @@ void runReflectiveMode(const std::string& initialPrompt, int maxIterations) {
     std::cout << "\n========================================" << std::endl;
     std::cout << "[GemStack] REFLECTIVE MODE ACTIVATED" << std::endl;
     std::cout << "[GemStack] Max iterations: " << maxIterations << std::endl;
+    std::cout << "[GemStack] Log file: " << REFLECTION_LOG_FILE << std::endl;
     std::cout << "========================================\n" << std::endl;
+
+    // Clear previous reflection log
+    reflectionLog.clear();
+
+    // Extract the actual goal from the initial prompt (remove "prompt " wrapper if present)
+    std::string initialGoal = initialPrompt;
+    if (initialGoal.find("prompt \"") == 0) {
+        initialGoal = initialGoal.substr(8); // Remove 'prompt "'
+        if (!initialGoal.empty() && initialGoal.back() == '"') {
+            initialGoal.pop_back(); // Remove trailing quote
+        }
+    }
 
     std::string currentPrompt = initialPrompt;
 
@@ -368,11 +417,49 @@ void runReflectiveMode(const std::string& initialPrompt, int maxIterations) {
         std::cout << "[GemStack] Reflection Iteration " << iteration << "/" << maxIterations << std::endl;
         std::cout << "----------------------------------------\n" << std::endl;
 
+        // Build context from previous iterations
+        std::string context = buildReflectionContext(initialGoal);
+
+        // For iterations after the first, inject context into the prompt
+        std::string promptWithContext = currentPrompt;
+        if (iteration > 1 && !context.empty()) {
+            // Extract prompt content and inject context
+            if (currentPrompt.find("prompt \"") == 0) {
+                std::string promptContent = currentPrompt.substr(8);
+                if (!promptContent.empty() && promptContent.back() == '"') {
+                    promptContent.pop_back();
+                }
+                promptWithContext = "prompt \"" + context + "CURRENT TASK: " + promptContent + "\"";
+            }
+        }
+
         // Start animation for this iteration
         startAnimation();
 
-        // Execute the current prompt
-        auto [success, output] = executeSinglePrompt(currentPrompt);
+        // Execute the current prompt (with context if applicable)
+        auto [success, output] = executeSinglePrompt(promptWithContext);
+
+        // Extract summary from output for the log
+        std::string summary = extractOutputSummary(output);
+
+        // Log this iteration
+        ReflectionLogEntry entry;
+        entry.iteration = iteration;
+        // Store the original prompt (without context) for cleaner logs
+        if (currentPrompt.find("prompt \"") == 0) {
+            entry.prompt = currentPrompt.substr(8);
+            if (!entry.prompt.empty() && entry.prompt.back() == '"') {
+                entry.prompt.pop_back();
+            }
+        } else {
+            entry.prompt = currentPrompt;
+        }
+        entry.summary = summary;
+        entry.success = success;
+        reflectionLog.push_back(entry);
+
+        // Write log to file after each iteration
+        writeReflectionLogToFile(initialGoal);
 
         if (!success) {
             stopAnimation();
@@ -384,8 +471,22 @@ void runReflectiveMode(const std::string& initialPrompt, int maxIterations) {
         if (iteration < maxIterations) {
             std::cout << "\n[GemStack] Generating next reflection prompt..." << std::endl;
 
-            // Ask the AI what to do next
-            std::string reflectionQuery = "prompt \"Based on what was just accomplished, what is the single most impactful next step to improve or extend this work? Respond with ONLY the next task description, nothing else. Be specific and actionable.\"";
+            // Build a comprehensive reflection query that includes the full history
+            std::string historyContext = "You are in iteration " + std::to_string(iteration) + " of " + std::to_string(maxIterations) + " in a reflective development session.\n\n";
+            historyContext += "ORIGINAL GOAL: " + initialGoal + "\n\n";
+            historyContext += "COMPLETED WORK:\n";
+            for (const auto& logEntry : reflectionLog) {
+                historyContext += "- Iteration " + std::to_string(logEntry.iteration) + ": " + logEntry.prompt;
+                if (!logEntry.summary.empty()) {
+                    historyContext += " (Result: " + logEntry.summary + ")";
+                }
+                historyContext += "\n";
+            }
+            historyContext += "\nBased on the original goal and the work completed so far, what is the single most impactful next step to improve or extend this work? ";
+            historyContext += "Do NOT repeat any tasks already completed. Focus on what's missing or could be improved. ";
+            historyContext += "Respond with ONLY the next task description, nothing else. Be specific and actionable.";
+
+            std::string reflectionQuery = "prompt \"" + historyContext + "\"";
 
             auto [reflectSuccess, nextPrompt] = executeSinglePrompt(reflectionQuery);
 
@@ -423,6 +524,7 @@ void runReflectiveMode(const std::string& initialPrompt, int maxIterations) {
 
     std::cout << "\n========================================" << std::endl;
     std::cout << "[GemStack] REFLECTIVE MODE COMPLETE" << std::endl;
+    std::cout << "[GemStack] See " << REFLECTION_LOG_FILE << " for full session log" << std::endl;
     std::cout << "========================================\n" << std::endl;
 }
 
