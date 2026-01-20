@@ -112,6 +112,34 @@ std::string trim(const std::string& str) {
     return str.substr(first, (last - first + 1));
 }
 
+// Extract content from a directive like: specify "content here" or prompt "content here"
+// Returns the content without quotes, or empty string if not a valid directive
+std::string extractDirectiveContent(const std::string& line, const std::string& directive) {
+    size_t pos = line.find(directive);
+    if (pos == std::string::npos) {
+        return "";
+    }
+
+    // Find the opening quote after the directive
+    size_t quoteStart = line.find('"', pos + directive.length());
+    if (quoteStart == std::string::npos) {
+        return "";
+    }
+
+    // Find the closing quote
+    size_t quoteEnd = line.rfind('"');
+    if (quoteEnd == std::string::npos || quoteEnd <= quoteStart) {
+        return "";
+    }
+
+    return line.substr(quoteStart + 1, quoteEnd - quoteStart - 1);
+}
+
+// Check if line starts with a directive (after trimming)
+bool startsWithDirective(const std::string& trimmedLine, const std::string& directive) {
+    return trimmedLine.find(directive) == 0;
+}
+
 bool loadCommandsFromFile(const std::string& filename) {
     std::ifstream file(filename);
     if (!file.is_open()) {
@@ -120,75 +148,119 @@ bool loadCommandsFromFile(const std::string& filename) {
     }
 
     std::string line;
-    bool collecting = false;
+    bool inGemStackBlock = false;
+    bool inPromptBlock = false;
     bool commandsLoaded = false;
+    int promptBlockCount = 0;
+
+    // Accumulated specify statements to prepend to the next prompt
+    std::vector<std::string> pendingSpecifications;
 
     while (std::getline(file, line)) {
-        size_t startPos = line.find("GemStackSTART");
-        size_t endPos = line.find("GemStackEND");
+        std::string trimmedLine = trim(line);
 
-        if (startPos != std::string::npos) {
-            collecting = true;
-            // Handle case where content starts on the same line after START
-            std::string afterStart = line.substr(startPos + 13);
-            if (!afterStart.empty()) {
-                // If END is also on this line
-                size_t endPosInline = afterStart.find("GemStackEND");
-                if (endPosInline != std::string::npos) {
-                   std::string cmd = afterStart.substr(0, endPosInline);
-                   cmd = trim(cmd);
-                   if (!cmd.empty()) {
-                       {
-                           std::lock_guard<std::mutex> lock(queueMutex);
-                           commandQueue.push(cmd);
-                           commandsLoaded = true;
-                       }
-                       std::cout << "[GemStack] File command queued from " << filename << std::endl;
-                   }
-                   collecting = false; 
-                   continue;
-                }
-                
-                std::string cmd = trim(afterStart);
-                if (!cmd.empty()) {
-                     {
-                        std::lock_guard<std::mutex> lock(queueMutex);
-                        commandQueue.push(cmd);
-                        commandsLoaded = true;
-                    }
-                    std::cout << "[GemStack] File command queued from " << filename << std::endl;
-                }
-            }
+        // Check for GemStack delimiters
+        if (trimmedLine.find("GemStackSTART") != std::string::npos) {
+            inGemStackBlock = true;
+            continue;
         }
-        else if (endPos != std::string::npos) {
-            collecting = false;
-            // Handle content before END on the same line
-            std::string beforeEnd = line.substr(0, endPos);
-             std::string cmd = trim(beforeEnd);
-             if (!cmd.empty()) {
+        if (trimmedLine.find("GemStackEND") != std::string::npos) {
+            inGemStackBlock = false;
+            continue;
+        }
+
+        // Only process content inside GemStack block
+        if (!inGemStackBlock) {
+            continue;
+        }
+
+        // Check for PromptBlock delimiters
+        if (trimmedLine.find("PromptBlockSTART") != std::string::npos) {
+            inPromptBlock = true;
+            promptBlockCount++;
+            pendingSpecifications.clear(); // Clear specs at block start
+            std::cout << "[GemStack] Entering PromptBlock " << promptBlockCount << std::endl;
+            continue;
+        }
+        if (trimmedLine.find("PromptBlockEND") != std::string::npos) {
+            inPromptBlock = false;
+            // Warn if there are unused specifications at block end
+            if (!pendingSpecifications.empty()) {
+                std::cout << "[GemStack] Warning: " << pendingSpecifications.size()
+                          << " specify statement(s) at end of block with no following prompt" << std::endl;
+                pendingSpecifications.clear();
+            }
+            std::cout << "[GemStack] Exiting PromptBlock " << promptBlockCount << std::endl;
+            continue;
+        }
+
+        // Skip empty lines
+        if (trimmedLine.empty()) {
+            continue;
+        }
+
+        // Handle 'specify' directive - accumulate for the next prompt
+        if (startsWithDirective(trimmedLine, "specify ")) {
+            std::string specContent = extractDirectiveContent(trimmedLine, "specify ");
+            if (!specContent.empty()) {
+                pendingSpecifications.push_back(specContent);
+                std::cout << "[GemStack] Specification queued: \""
+                          << (specContent.length() > 50 ? specContent.substr(0, 50) + "..." : specContent)
+                          << "\"" << std::endl;
+            }
+            continue;
+        }
+
+        // Handle 'prompt' directive - may have specifications prepended
+        if (startsWithDirective(trimmedLine, "prompt ")) {
+            std::string promptContent = extractDirectiveContent(trimmedLine, "prompt ");
+
+            if (!promptContent.empty()) {
+                std::string finalCommand;
+
+                // If there are pending specifications, prepend them as a verification checkpoint
+                if (!pendingSpecifications.empty()) {
+                    std::string verificationBlock = "CHECKPOINT - Before proceeding, verify the following expectations are met. If any are NOT correct, fix them first and explain what was missing:\n";
+                    for (size_t i = 0; i < pendingSpecifications.size(); i++) {
+                        verificationBlock += "  " + std::to_string(i + 1) + ". " + pendingSpecifications[i] + "\n";
+                    }
+                    verificationBlock += "\nAfter verification is complete, proceed with the following task:\n" + promptContent;
+
+                    finalCommand = "prompt \"" + verificationBlock + "\"";
+
+                    std::cout << "[GemStack] Prompt with " << pendingSpecifications.size()
+                              << " verification checkpoint(s) queued" << std::endl;
+                    pendingSpecifications.clear();
+                } else {
+                    finalCommand = trimmedLine; // Use original prompt line
+                    std::cout << "[GemStack] Prompt queued from " << filename << std::endl;
+                }
+
                 {
                     std::lock_guard<std::mutex> lock(queueMutex);
-                    commandQueue.push(cmd);
+                    commandQueue.push(finalCommand);
                     commandsLoaded = true;
                 }
-                std::cout << "[GemStack] File command queued from " << filename << std::endl;
-             }
-        }
-        else if (collecting) {
-            // In the body of the block. Treat this line as a command.
-            if (line.empty()) continue;
-            
-            std::string cmd = trim(line);
-            if (cmd.empty()) continue; // skip blank lines
-
-            {
-                std::lock_guard<std::mutex> lock(queueMutex);
-                commandQueue.push(cmd);
-                commandsLoaded = true;
             }
-            std::cout << "[GemStack] File command queued from " << filename << std::endl;
+            continue;
         }
+
+        // For any other command (not prompt or specify), queue it directly
+        // This handles things like --help, --version, etc.
+        {
+            std::lock_guard<std::mutex> lock(queueMutex);
+            commandQueue.push(trimmedLine);
+            commandsLoaded = true;
+        }
+        std::cout << "[GemStack] Command queued from " << filename << std::endl;
     }
+
+    // Final warning for unused specifications outside any block
+    if (!pendingSpecifications.empty()) {
+        std::cout << "[GemStack] Warning: " << pendingSpecifications.size()
+                  << " specify statement(s) at end of file with no following prompt" << std::endl;
+    }
+
     return commandsLoaded;
 }
 

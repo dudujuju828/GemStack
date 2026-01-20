@@ -35,6 +35,10 @@ bool isModelExhausted(const std::string& output);
 // String utilities
 std::string trim(const std::string& str);
 
+// Directive parsing utilities
+std::string extractDirectiveContent(const std::string& line, const std::string& directive);
+bool startsWithDirective(const std::string& trimmedLine, const std::string& directive);
+
 // Path utilities
 std::string normalizePath(const std::string& path);
 std::string joinPath(const std::string& base, const std::string& relative);

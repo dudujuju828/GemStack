@@ -25,10 +25,13 @@ void CreateTempFile(const std::string& filename, const std::string& content) {
 // File Parsing Tests
 // ============================================================================
 
-TEST(GemStackParsing, SingleLineCommand) {
+TEST(GemStackParsing, SinglePromptCommand) {
     ClearQueue();
     std::string filename = "test_single.txt";
-    CreateTempFile(filename, "GemStackSTART prompt \"Hello\" GemStackEND");
+    std::string content = "GemStackSTART\n";
+    content += "prompt \"Hello\"\n";
+    content += "GemStackEND";
+    CreateTempFile(filename, content);
 
     bool loaded = loadCommandsFromFile(filename);
 
@@ -41,12 +44,12 @@ TEST(GemStackParsing, SingleLineCommand) {
     std::remove(filename.c_str());
 }
 
-TEST(GemStackParsing, MultiLineCommands) {
+TEST(GemStackParsing, MultiLinePrompts) {
     ClearQueue();
     std::string filename = "test_multi.txt";
     std::string content = "GemStackSTART\n";
-    content += "cmd1\n";
-    content += "cmd2\n";
+    content += "prompt \"First task\"\n";
+    content += "prompt \"Second task\"\n";
     content += "GemStackEND";
     CreateTempFile(filename, content);
 
@@ -56,9 +59,9 @@ TEST(GemStackParsing, MultiLineCommands) {
     {
         std::lock_guard<std::mutex> lock(queueMutex);
         ASSERT_EQ(commandQueue.size(), 2);
-        EXPECT_EQ(commandQueue.front(), "cmd1");
+        EXPECT_EQ(commandQueue.front(), "prompt \"First task\"");
         commandQueue.pop();
-        EXPECT_EQ(commandQueue.front(), "cmd2");
+        EXPECT_EQ(commandQueue.front(), "prompt \"Second task\"");
     }
     std::remove(filename.c_str());
 }
@@ -68,7 +71,7 @@ TEST(GemStackParsing, IgnoreEmptyLines) {
     std::string filename = "test_empty_lines.txt";
     std::string content = "GemStackSTART\n";
     content += "\n";
-    content += "cmd1\n";
+    content += "prompt \"Hello\"\n";
     content += "\n";
     content += "GemStackEND";
     CreateTempFile(filename, content);
@@ -79,16 +82,17 @@ TEST(GemStackParsing, IgnoreEmptyLines) {
     {
         std::lock_guard<std::mutex> lock(queueMutex);
         ASSERT_EQ(commandQueue.size(), 1);
-        EXPECT_EQ(commandQueue.front(), "cmd1");
+        EXPECT_EQ(commandQueue.front(), "prompt \"Hello\"");
     }
     std::remove(filename.c_str());
 }
 
-TEST(GemStackParsing, MixedInlineAndMulti) {
+TEST(GemStackParsing, NonPromptCommands) {
     ClearQueue();
-    std::string filename = "test_mixed.txt";
-    std::string content = "GemStackSTART cmd1\n";
-    content += "cmd2\n";
+    std::string filename = "test_non_prompt.txt";
+    std::string content = "GemStackSTART\n";
+    content += "--help\n";
+    content += "--version\n";
     content += "GemStackEND";
     CreateTempFile(filename, content);
 
@@ -98,9 +102,9 @@ TEST(GemStackParsing, MixedInlineAndMulti) {
     {
         std::lock_guard<std::mutex> lock(queueMutex);
         ASSERT_EQ(commandQueue.size(), 2);
-        EXPECT_EQ(commandQueue.front(), "cmd1");
+        EXPECT_EQ(commandQueue.front(), "--help");
         commandQueue.pop();
-        EXPECT_EQ(commandQueue.front(), "cmd2");
+        EXPECT_EQ(commandQueue.front(), "--version");
     }
     std::remove(filename.c_str());
 }
@@ -109,6 +113,209 @@ TEST(GemStackParsing, FileNotFound) {
     ClearQueue();
     bool loaded = loadCommandsFromFile("nonexistent_file_12345.txt");
     EXPECT_FALSE(loaded);
+}
+
+// ============================================================================
+// Specify Directive Tests
+// ============================================================================
+
+TEST(SpecifyDirective, SingleSpecifyBeforePrompt) {
+    ClearQueue();
+    std::string filename = "test_specify_single.txt";
+    std::string content = "GemStackSTART\n";
+    content += "prompt \"First task\"\n";
+    content += "specify \"Expected result X\"\n";
+    content += "prompt \"Second task\"\n";
+    content += "GemStackEND";
+    CreateTempFile(filename, content);
+
+    bool loaded = loadCommandsFromFile(filename);
+
+    EXPECT_TRUE(loaded);
+    {
+        std::lock_guard<std::mutex> lock(queueMutex);
+        ASSERT_EQ(commandQueue.size(), 2);
+        // First prompt unchanged
+        EXPECT_EQ(commandQueue.front(), "prompt \"First task\"");
+        commandQueue.pop();
+        // Second prompt should have checkpoint prepended
+        std::string secondPrompt = commandQueue.front();
+        EXPECT_TRUE(secondPrompt.find("CHECKPOINT") != std::string::npos);
+        EXPECT_TRUE(secondPrompt.find("Expected result X") != std::string::npos);
+        EXPECT_TRUE(secondPrompt.find("Second task") != std::string::npos);
+    }
+    std::remove(filename.c_str());
+}
+
+TEST(SpecifyDirective, MultipleSpecifiesBeforePrompt) {
+    ClearQueue();
+    std::string filename = "test_specify_multi.txt";
+    std::string content = "GemStackSTART\n";
+    content += "prompt \"First task\"\n";
+    content += "specify \"Check A exists\"\n";
+    content += "specify \"Check B is correct\"\n";
+    content += "specify \"Check C has value\"\n";
+    content += "prompt \"Second task\"\n";
+    content += "GemStackEND";
+    CreateTempFile(filename, content);
+
+    bool loaded = loadCommandsFromFile(filename);
+
+    EXPECT_TRUE(loaded);
+    {
+        std::lock_guard<std::mutex> lock(queueMutex);
+        ASSERT_EQ(commandQueue.size(), 2);
+        commandQueue.pop(); // Skip first prompt
+        std::string secondPrompt = commandQueue.front();
+        // All three specifications should be present
+        EXPECT_TRUE(secondPrompt.find("Check A exists") != std::string::npos);
+        EXPECT_TRUE(secondPrompt.find("Check B is correct") != std::string::npos);
+        EXPECT_TRUE(secondPrompt.find("Check C has value") != std::string::npos);
+        // Should be numbered
+        EXPECT_TRUE(secondPrompt.find("1.") != std::string::npos);
+        EXPECT_TRUE(secondPrompt.find("2.") != std::string::npos);
+        EXPECT_TRUE(secondPrompt.find("3.") != std::string::npos);
+    }
+    std::remove(filename.c_str());
+}
+
+TEST(SpecifyDirective, SpecifyWithoutFollowingPrompt) {
+    ClearQueue();
+    std::string filename = "test_specify_orphan.txt";
+    std::string content = "GemStackSTART\n";
+    content += "prompt \"First task\"\n";
+    content += "specify \"Orphaned spec\"\n";
+    content += "GemStackEND";
+    CreateTempFile(filename, content);
+
+    bool loaded = loadCommandsFromFile(filename);
+
+    // Should still load successfully, just warn about orphan
+    EXPECT_TRUE(loaded);
+    {
+        std::lock_guard<std::mutex> lock(queueMutex);
+        // Only the prompt should be queued, specify is orphaned
+        ASSERT_EQ(commandQueue.size(), 1);
+        EXPECT_EQ(commandQueue.front(), "prompt \"First task\"");
+    }
+    std::remove(filename.c_str());
+}
+
+// ============================================================================
+// PromptBlock Tests
+// ============================================================================
+
+TEST(PromptBlock, BasicPromptBlock) {
+    ClearQueue();
+    std::string filename = "test_prompt_block.txt";
+    std::string content = "GemStackSTART\n";
+    content += "PromptBlockSTART\n";
+    content += "prompt \"Task A\"\n";
+    content += "prompt \"Task B\"\n";
+    content += "PromptBlockEND\n";
+    content += "GemStackEND";
+    CreateTempFile(filename, content);
+
+    bool loaded = loadCommandsFromFile(filename);
+
+    EXPECT_TRUE(loaded);
+    {
+        std::lock_guard<std::mutex> lock(queueMutex);
+        ASSERT_EQ(commandQueue.size(), 2);
+        EXPECT_EQ(commandQueue.front(), "prompt \"Task A\"");
+        commandQueue.pop();
+        EXPECT_EQ(commandQueue.front(), "prompt \"Task B\"");
+    }
+    std::remove(filename.c_str());
+}
+
+TEST(PromptBlock, MultiplePromptBlocks) {
+    ClearQueue();
+    std::string filename = "test_multi_blocks.txt";
+    std::string content = "GemStackSTART\n";
+    content += "PromptBlockSTART\n";
+    content += "prompt \"Block 1 Task\"\n";
+    content += "PromptBlockEND\n";
+    content += "PromptBlockSTART\n";
+    content += "prompt \"Block 2 Task\"\n";
+    content += "PromptBlockEND\n";
+    content += "GemStackEND";
+    CreateTempFile(filename, content);
+
+    bool loaded = loadCommandsFromFile(filename);
+
+    EXPECT_TRUE(loaded);
+    {
+        std::lock_guard<std::mutex> lock(queueMutex);
+        ASSERT_EQ(commandQueue.size(), 2);
+        EXPECT_EQ(commandQueue.front(), "prompt \"Block 1 Task\"");
+        commandQueue.pop();
+        EXPECT_EQ(commandQueue.front(), "prompt \"Block 2 Task\"");
+    }
+    std::remove(filename.c_str());
+}
+
+TEST(PromptBlock, SpecifyResetsAtBlockBoundary) {
+    ClearQueue();
+    std::string filename = "test_block_reset.txt";
+    std::string content = "GemStackSTART\n";
+    content += "PromptBlockSTART\n";
+    content += "prompt \"Block 1 Task\"\n";
+    content += "specify \"Should not carry over\"\n";
+    content += "PromptBlockEND\n";
+    content += "PromptBlockSTART\n";
+    content += "prompt \"Block 2 Task\"\n";
+    content += "PromptBlockEND\n";
+    content += "GemStackEND";
+    CreateTempFile(filename, content);
+
+    bool loaded = loadCommandsFromFile(filename);
+
+    EXPECT_TRUE(loaded);
+    {
+        std::lock_guard<std::mutex> lock(queueMutex);
+        ASSERT_EQ(commandQueue.size(), 2);
+        commandQueue.pop(); // Skip first
+        // Second prompt should NOT have the orphaned specification
+        std::string secondPrompt = commandQueue.front();
+        EXPECT_TRUE(secondPrompt.find("CHECKPOINT") == std::string::npos);
+        EXPECT_TRUE(secondPrompt.find("Should not carry over") == std::string::npos);
+    }
+    std::remove(filename.c_str());
+}
+
+// ============================================================================
+// Directive Parsing Helper Tests
+// ============================================================================
+
+TEST(DirectiveParsing, ExtractDirectiveContentBasic) {
+    std::string line = "prompt \"Hello World\"";
+    EXPECT_EQ(extractDirectiveContent(line, "prompt "), "Hello World");
+}
+
+TEST(DirectiveParsing, ExtractDirectiveContentSpecify) {
+    std::string line = "specify \"Check that X exists\"";
+    EXPECT_EQ(extractDirectiveContent(line, "specify "), "Check that X exists");
+}
+
+TEST(DirectiveParsing, ExtractDirectiveContentNoQuotes) {
+    std::string line = "prompt Hello";
+    EXPECT_EQ(extractDirectiveContent(line, "prompt "), "");
+}
+
+TEST(DirectiveParsing, ExtractDirectiveContentNotFound) {
+    std::string line = "something else";
+    EXPECT_EQ(extractDirectiveContent(line, "prompt "), "");
+}
+
+TEST(DirectiveParsing, StartsWithDirectiveTrue) {
+    EXPECT_TRUE(startsWithDirective("prompt \"test\"", "prompt "));
+    EXPECT_TRUE(startsWithDirective("specify \"check\"", "specify "));
+}
+
+TEST(DirectiveParsing, StartsWithDirectiveFalse) {
+    EXPECT_FALSE(startsWithDirective("something prompt", "prompt "));
+    EXPECT_FALSE(startsWithDirective("--help", "prompt "));
 }
 
 // ============================================================================

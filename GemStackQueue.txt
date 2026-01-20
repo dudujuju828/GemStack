@@ -1,6 +1,18 @@
 GemStackSTART
+
+PromptBlockSTART
 prompt "Initialize a new Next.js project with Tailwind CSS in the current directory. Name it 'my-web-app'."
+
+specify "The project should have a 'my-web-app' folder containing package.json with Next.js and Tailwind CSS dependencies"
 prompt "In 'my-web-app', create a responsive landing page for a professional consulting firm. Use a clean, modern aesthetic with a primary color of indigo."
+
+specify "The landing page should exist at src/app/page.tsx (or pages/index.tsx) with responsive design and indigo color scheme"
+specify "Tailwind CSS classes should be used for styling"
 prompt "Create a 'Services' component that uses a grid layout to display three core consulting services with icons and descriptions."
+
+specify "A Services component should exist with a 3-column grid layout on desktop"
+specify "Each service card should have an icon and description"
 prompt "Add a 'Contact' section with a functional form and validation logic."
+PromptBlockEND
+
 GemStackEND
