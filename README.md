@@ -81,7 +81,7 @@ If you prefer to set up manually:
 
 ### Configuration: GemStackQueue.txt
 
-The `GemStackQueue.txt` file defines the commands to be executed. Place this file in the project root directory (or the same directory as the executable).
+The `GemStackQueue.txt` file defines the commands to be executed. Place this file in the same directory as the executable.
 
 #### Syntax
 - **Structure**: Enclose all commands within a single `GemStackSTART` and `GemStackEND` block.
@@ -114,6 +114,8 @@ The executable is built directly in the project root directory for convenience.
 ```bash
 ./GemStack
 ```
+
+**Note:** GemStack runs in the current directory. The AI has access to read and write files in the directory from which you run the application.
 
 ### Modes of Operation
 

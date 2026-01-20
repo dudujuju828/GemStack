@@ -29,67 +29,92 @@
 
 namespace fs = std::filesystem;
 
-// Workspace folder paths (relative to executable)
-std::string workspaceInputPath;
-std::string workspaceOutputPath;
-std::string executableDir;
+#include "EmbeddedCli.h"
 
-// Get the directory containing the executable
-std::string getExecutableDirectory() {
+// Global path to the CLI entry point
+std::string g_geminiCliPath;
+
+std::string getHomeDirectory() {
 #ifdef _WIN32
-    char buffer[MAX_PATH];
-    GetModuleFileNameA(NULL, buffer, MAX_PATH);
-    std::string fullPath(buffer);
-    size_t lastSlash = fullPath.find_last_of("\\/");
-    return (lastSlash != std::string::npos) ? fullPath.substr(0, lastSlash) : ".";
+    const char* home = getenv("USERPROFILE");
+    if (home) return std::string(home);
+    const char* drive = getenv("HOMEDRIVE");
+    const char* path = getenv("HOMEPATH");
+    if (drive && path) return std::string(drive) + std::string(path);
+    return ".";
 #else
-    char buffer[1024];
-    ssize_t len = readlink("/proc/self/exe", buffer, sizeof(buffer) - 1);
-    if (len != -1) {
-        buffer[len] = '\0';
-        std::string fullPath(buffer);
-        size_t lastSlash = fullPath.find_last_of('/');
-        return (lastSlash != std::string::npos) ? fullPath.substr(0, lastSlash) : ".";
-    }
+    const char* home = getenv("HOME");
+    if (home) return std::string(home);
     return ".";
 #endif
 }
 
-// Initialize workspace folders (input/output)
-bool initializeWorkspace() {
-    executableDir = normalizePath(getExecutableDirectory());
-    workspaceInputPath = joinPath(executableDir, "workspace/input");
-    workspaceOutputPath = joinPath(executableDir, "workspace/output");
-
-    try {
-        // Create workspace directories if they don't exist
-        fs::create_directories(workspaceInputPath);
-        fs::create_directories(workspaceOutputPath);
-
-        std::cout << "[GemStack] Workspace initialized:" << std::endl;
-        std::cout << "  Input folder:  " << workspaceInputPath << std::endl;
-        std::cout << "  Output folder: " << workspaceOutputPath << std::endl;
-
+bool extractEmbeddedCli(const std::string& targetDir) {
+    // Check if main file exists (simple check)
+    if (fs::exists(targetDir + "/gemini.js")) {
         return true;
+    }
+
+    std::cout << "[GemStack] Extracting embedded Gemini CLI to " << targetDir << "..." << std::endl;
+    
+    try {
+        fs::create_directories(targetDir);
     } catch (const fs::filesystem_error& e) {
-        std::cerr << "[GemStack] Error creating workspace folders: " << e.what() << std::endl;
+        std::cerr << "Error creating directory: " << e.what() << std::endl;
         return false;
     }
+
+    std::string tempZipPath = targetDir + "/cli.zip";
+    std::ofstream zipFile(tempZipPath, std::ios::binary);
+    if (!zipFile) {
+        std::cerr << "Failed to create temp zip file: " << tempZipPath << std::endl;
+        return false;
+    }
+    zipFile.write(reinterpret_cast<const char*>(EMBEDDED_CLI_DATA), EMBEDDED_CLI_SIZE);
+    zipFile.close();
+    
+    std::string command = "tar -xf \"" + tempZipPath + "\" -C \"" + targetDir + "\"";
+    int result = system(command.c_str());
+    
+    try {
+        fs::remove(tempZipPath);
+    } catch (...) {}
+    
+    if (result != 0) {
+        std::cerr << "Failed to extract CLI using tar." << std::endl;
+        #ifdef _WIN32
+        std::cerr << "Trying PowerShell Expand-Archive..." << std::endl;
+        std::ofstream zipFile2(tempZipPath, std::ios::binary);
+        zipFile2.write(reinterpret_cast<const char*>(EMBEDDED_CLI_DATA), EMBEDDED_CLI_SIZE);
+        zipFile2.close();
+        
+        std::string psCommand = "powershell -Command \"Expand-Archive -Path '" + tempZipPath + "' -DestinationPath '" + targetDir + "' -Force\"";
+        result = system(psCommand.c_str());
+        try { fs::remove(tempZipPath); } catch (...) {}
+        
+        if (result != 0) {
+             std::cerr << "Failed to extract CLI using PowerShell." << std::endl;
+             return false;
+        }
+        #else
+        return false;
+        #endif
+    }
+    
+    return true;
 }
 
-// Build workspace context string for AI prompts
-std::string buildWorkspaceContext() {
-    std::string context = "WORKSPACE INFORMATION:\n";
-    context += "You are working in a sandboxed environment with two folders:\n";
-    context += "- INPUT FOLDER: " + workspaceInputPath + "\n";
-    context += "  (Read-only resources provided by the user)\n";
-    context += "- OUTPUT FOLDER: " + workspaceOutputPath + "\n";
-    context += "  (Your working directory - create all files and projects here)\n\n";
-    context += "IMPORTANT: Only modify files in the OUTPUT folder. ";
-    context += "Reference resources from the INPUT folder as needed.\n\n";
-    return context;
+bool initializeCli() {
+    std::string home = getHomeDirectory();
+    std::string cliDir = joinPath(home, ".gemstack/gemini-cli");
+    
+    if (!extractEmbeddedCli(cliDir)) {
+        return false;
+    }
+    
+    g_geminiCliPath = joinPath(cliDir, "gemini.js");
+    return true;
 }
-
 // Reflection mode prompt log
 struct ReflectionLogEntry {
     int iteration;
@@ -101,11 +126,8 @@ struct ReflectionLogEntry {
 std::vector<ReflectionLogEntry> reflectionLog;
 const std::string REFLECTION_LOG_FILENAME = "GemStackReflectionLog.txt";
 
-// Get the full path for the reflection log (in output folder)
+// Get the full path for the reflection log (in current folder)
 std::string getReflectionLogPath() {
-    if (!workspaceOutputPath.empty()) {
-        return workspaceOutputPath + "/" + REFLECTION_LOG_FILENAME;
-    }
     return REFLECTION_LOG_FILENAME;
 }
 
@@ -408,38 +430,21 @@ std::pair<int, std::string> executeWithOutput(const std::string& command, const 
 #endif
 
 // Execute a single prompt and return the result
-// If injectWorkspaceContext is true, workspace info is prepended to the prompt
-std::pair<bool, std::string> executeSinglePrompt(const std::string& prompt, bool injectWorkspaceContext = true) {
+std::pair<bool, std::string> executeSinglePrompt(const std::string& prompt) {
     bool success = false;
     std::string finalOutput;
 
-    // Build the prompt with optional workspace context
-    std::string fullPrompt = prompt;
-    if (injectWorkspaceContext && !workspaceOutputPath.empty()) {
-        // Extract prompt content if wrapped in "prompt ..."
-        if (prompt.find("prompt \"") == 0) {
-            std::string promptContent = prompt.substr(8);
-            if (!promptContent.empty() && promptContent.back() == '"') {
-                promptContent.pop_back();
-            }
-            fullPrompt = "prompt \"" + buildWorkspaceContext() + promptContent + "\"";
-        }
-    }
-
     // Sanitize the prompt to prevent command injection
-    std::string safePrompt = escapeForShell(fullPrompt);
-
-    // Build absolute path to gemini-cli (since we're running from output folder)
-    std::string geminiCliPath = executableDir + "/gemini-cli/scripts/start.js";
+    std::string safePrompt = escapeForShell(prompt);
 
     while (!success) {
         std::string model = getCurrentModel();
         std::cout << "[GemStack] Processing with model " << model << std::endl;
 
-        std::string fullCommand = "node \"" + geminiCliPath + "\" --yolo --model " + model + " " + safePrompt;
+        std::string fullCommand = "node \"" + g_geminiCliPath + "\" --yolo --model " + model + " " + safePrompt;
 
-        // Execute with output folder as working directory
-        auto [result, output] = executeWithOutput(fullCommand, workspaceOutputPath);
+        // Execute in current directory
+        auto [result, output] = executeWithOutput(fullCommand, ".");
         finalOutput = output;
 
         if (result == 0 && !isModelExhausted(output)) {
@@ -637,11 +642,11 @@ void printUsage(const char* programName) {
 int main(int argc, char* argv[]) {
     std::cout << "Welcome to GemStack!" << std::endl;
 
-    // Initialize workspace folders
-    if (!initializeWorkspace()) {
-        std::cerr << "Failed to initialize workspace. Exiting." << std::endl;
+    if (!initializeCli()) {
+        std::cerr << "Failed to initialize embedded CLI. Exiting." << std::endl;
         return 1;
     }
+
     std::cout << std::endl;
 
     // Parse command line arguments
