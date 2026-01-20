@@ -1,5 +1,6 @@
 #include <GemStackCore.h>
 #include <fstream>
+#include <sstream>
 #include <iostream>
 #include <algorithm>
 
@@ -189,4 +190,79 @@ bool loadCommandsFromFile(const std::string& filename) {
         }
     }
     return commandsLoaded;
+}
+
+// Normalize path separators (convert backslashes to forward slashes)
+std::string normalizePath(const std::string& path) {
+    std::string normalized = path;
+    std::replace(normalized.begin(), normalized.end(), '\\', '/');
+
+    // Remove trailing slash if present (unless it's the root)
+    if (normalized.length() > 1 && normalized.back() == '/') {
+        normalized.pop_back();
+    }
+
+    return normalized;
+}
+
+// Join two path components
+std::string joinPath(const std::string& base, const std::string& relative) {
+    if (base.empty()) {
+        return normalizePath(relative);
+    }
+    if (relative.empty()) {
+        return normalizePath(base);
+    }
+
+    std::string normalizedBase = normalizePath(base);
+    std::string normalizedRelative = normalizePath(relative);
+
+    // Remove leading slash from relative if present
+    if (!normalizedRelative.empty() && normalizedRelative[0] == '/') {
+        normalizedRelative = normalizedRelative.substr(1);
+    }
+
+    // Ensure base doesn't end with slash
+    if (!normalizedBase.empty() && normalizedBase.back() == '/') {
+        return normalizedBase + normalizedRelative;
+    }
+
+    return normalizedBase + "/" + normalizedRelative;
+}
+
+// Extract the first meaningful line from output (skipping status messages)
+std::string extractFirstMeaningfulLine(const std::string& output, size_t maxLength) {
+    if (output.empty()) {
+        return "Completed";
+    }
+
+    std::istringstream stream(output);
+    std::string line;
+    std::string result;
+
+    while (std::getline(stream, line)) {
+        // Skip empty lines
+        if (line.empty()) continue;
+
+        // Skip common status/formatting lines
+        if (line.find("[GemStack]") != std::string::npos) continue;
+        if (line.find("========") != std::string::npos) continue;
+        if (line.find("--------") != std::string::npos) continue;
+        if (line.find("Checking build") != std::string::npos) continue;
+
+        // Found a meaningful line
+        result = trim(line);
+        break;
+    }
+
+    if (result.empty()) {
+        return "Completed";
+    }
+
+    // Truncate if too long
+    if (result.length() > maxLength) {
+        result = result.substr(0, maxLength - 3) + "...";
+    }
+
+    return result;
 }

@@ -13,6 +13,7 @@
 #include <array>
 #include <vector>
 #include <stdexcept>
+#include <filesystem>
 
 #include <GemStackCore.h>
 
@@ -26,6 +27,69 @@
 #include <unistd.h>
 #endif
 
+namespace fs = std::filesystem;
+
+// Workspace folder paths (relative to executable)
+std::string workspaceInputPath;
+std::string workspaceOutputPath;
+std::string executableDir;
+
+// Get the directory containing the executable
+std::string getExecutableDirectory() {
+#ifdef _WIN32
+    char buffer[MAX_PATH];
+    GetModuleFileNameA(NULL, buffer, MAX_PATH);
+    std::string fullPath(buffer);
+    size_t lastSlash = fullPath.find_last_of("\\/");
+    return (lastSlash != std::string::npos) ? fullPath.substr(0, lastSlash) : ".";
+#else
+    char buffer[1024];
+    ssize_t len = readlink("/proc/self/exe", buffer, sizeof(buffer) - 1);
+    if (len != -1) {
+        buffer[len] = '\0';
+        std::string fullPath(buffer);
+        size_t lastSlash = fullPath.find_last_of('/');
+        return (lastSlash != std::string::npos) ? fullPath.substr(0, lastSlash) : ".";
+    }
+    return ".";
+#endif
+}
+
+// Initialize workspace folders (input/output)
+bool initializeWorkspace() {
+    executableDir = normalizePath(getExecutableDirectory());
+    workspaceInputPath = joinPath(executableDir, "workspace/input");
+    workspaceOutputPath = joinPath(executableDir, "workspace/output");
+
+    try {
+        // Create workspace directories if they don't exist
+        fs::create_directories(workspaceInputPath);
+        fs::create_directories(workspaceOutputPath);
+
+        std::cout << "[GemStack] Workspace initialized:" << std::endl;
+        std::cout << "  Input folder:  " << workspaceInputPath << std::endl;
+        std::cout << "  Output folder: " << workspaceOutputPath << std::endl;
+
+        return true;
+    } catch (const fs::filesystem_error& e) {
+        std::cerr << "[GemStack] Error creating workspace folders: " << e.what() << std::endl;
+        return false;
+    }
+}
+
+// Build workspace context string for AI prompts
+std::string buildWorkspaceContext() {
+    std::string context = "WORKSPACE INFORMATION:\n";
+    context += "You are working in a sandboxed environment with two folders:\n";
+    context += "- INPUT FOLDER: " + workspaceInputPath + "\n";
+    context += "  (Read-only resources provided by the user)\n";
+    context += "- OUTPUT FOLDER: " + workspaceOutputPath + "\n";
+    context += "  (Your working directory - create all files and projects here)\n\n";
+    context += "IMPORTANT: Only modify files in the OUTPUT folder. ";
+    context += "Reference resources from the INPUT folder as needed.\n\n";
+    return context;
+}
+
 // Reflection mode prompt log
 struct ReflectionLogEntry {
     int iteration;
@@ -35,11 +99,20 @@ struct ReflectionLogEntry {
 };
 
 std::vector<ReflectionLogEntry> reflectionLog;
-const std::string REFLECTION_LOG_FILE = "GemStackReflectionLog.txt";
+const std::string REFLECTION_LOG_FILENAME = "GemStackReflectionLog.txt";
+
+// Get the full path for the reflection log (in output folder)
+std::string getReflectionLogPath() {
+    if (!workspaceOutputPath.empty()) {
+        return workspaceOutputPath + "/" + REFLECTION_LOG_FILENAME;
+    }
+    return REFLECTION_LOG_FILENAME;
+}
 
 // Write reflection log to file for persistence and debugging
 void writeReflectionLogToFile(const std::string& initialGoal) {
-    std::ofstream logFile(REFLECTION_LOG_FILE);
+    std::string logPath = getReflectionLogPath();
+    std::ofstream logFile(logPath);
     if (!logFile.is_open()) {
         std::cerr << "[GemStack] Warning: Could not write reflection log file." << std::endl;
         return;
@@ -85,39 +158,9 @@ std::string buildReflectionContext(const std::string& initialGoal) {
     return context;
 }
 
-// Extract a brief summary from command output (first meaningful line or truncated)
-std::string extractOutputSummary(const std::string& output, size_t maxLength = 200) {
-    if (output.empty()) {
-        return "Completed";
-    }
-
-    // Find first non-empty line that isn't a GemStack status message
-    std::istringstream stream(output);
-    std::string line;
-    std::string summary;
-
-    while (std::getline(stream, line)) {
-        // Skip empty lines and GemStack status messages
-        if (line.empty()) continue;
-        if (line.find("[GemStack]") != std::string::npos) continue;
-        if (line.find("========") != std::string::npos) continue;
-        if (line.find("--------") != std::string::npos) continue;
-
-        // Found a meaningful line
-        summary = line;
-        break;
-    }
-
-    if (summary.empty()) {
-        summary = "Completed";
-    }
-
-    // Truncate if too long
-    if (summary.length() > maxLength) {
-        summary = summary.substr(0, maxLength - 3) + "...";
-    }
-
-    return summary;
+// Wrapper for extracting output summary (uses core function)
+inline std::string extractOutputSummary(const std::string& output, size_t maxLength = 200) {
+    return extractFirstMeaningfulLine(output, maxLength);
 }
 
 // Animation control
@@ -226,7 +269,7 @@ void stopAnimation() {
 
 #ifdef _WIN32
 // Windows implementation using CreateProcess with proper console handling
-std::pair<int, std::string> executeWithOutput(const std::string& command) {
+std::pair<int, std::string> executeWithOutput(const std::string& command, const std::string& workingDir = "") {
     std::string output;
 
     // Create pipes for capturing stdout/stderr
@@ -273,6 +316,9 @@ std::pair<int, std::string> executeWithOutput(const std::string& command) {
     // Build command line - use cmd.exe /c to ensure proper shell environment
     std::string cmdLine = "cmd.exe /c " + command;
 
+    // Determine working directory (NULL means inherit from parent)
+    const char* lpCurrentDirectory = workingDir.empty() ? NULL : workingDir.c_str();
+
     // Create the child process
     // Using CREATE_NO_WINDOW to prevent console window popup
     // The process inherits our console for node-pty compatibility
@@ -284,7 +330,7 @@ std::pair<int, std::string> executeWithOutput(const std::string& command) {
         TRUE,                          // Inherit handles
         0,                             // Creation flags - inherit parent console
         NULL,                          // Environment (inherit from parent)
-        NULL,                          // Current directory (inherit from parent)
+        lpCurrentDirectory,            // Current directory for the child process
         &si,                           // Startup info
         &pi                            // Process info
     );
@@ -332,14 +378,19 @@ std::pair<int, std::string> executeWithOutput(const std::string& command) {
 
 #else
 // Unix implementation using popen
-std::pair<int, std::string> executeWithOutput(const std::string& command) {
+std::pair<int, std::string> executeWithOutput(const std::string& command, const std::string& workingDir = "") {
     std::string output;
     std::array<char, 256> buffer;
 
-    // Redirect stderr to stdout to capture all output
-    std::string cmdWithRedirect = command + " 2>&1";
+    // Build command with optional directory change
+    std::string fullCommand;
+    if (!workingDir.empty()) {
+        fullCommand = "cd \"" + workingDir + "\" && " + command + " 2>&1";
+    } else {
+        fullCommand = command + " 2>&1";
+    }
 
-    FILE* pipe = popen(cmdWithRedirect.c_str(), "r");
+    FILE* pipe = popen(fullCommand.c_str(), "r");
     if (!pipe) {
         return {-1, "Failed to execute command"};
     }
@@ -357,19 +408,38 @@ std::pair<int, std::string> executeWithOutput(const std::string& command) {
 #endif
 
 // Execute a single prompt and return the result
-std::pair<bool, std::string> executeSinglePrompt(const std::string& prompt) {
+// If injectWorkspaceContext is true, workspace info is prepended to the prompt
+std::pair<bool, std::string> executeSinglePrompt(const std::string& prompt, bool injectWorkspaceContext = true) {
     bool success = false;
     std::string finalOutput;
 
+    // Build the prompt with optional workspace context
+    std::string fullPrompt = prompt;
+    if (injectWorkspaceContext && !workspaceOutputPath.empty()) {
+        // Extract prompt content if wrapped in "prompt ..."
+        if (prompt.find("prompt \"") == 0) {
+            std::string promptContent = prompt.substr(8);
+            if (!promptContent.empty() && promptContent.back() == '"') {
+                promptContent.pop_back();
+            }
+            fullPrompt = "prompt \"" + buildWorkspaceContext() + promptContent + "\"";
+        }
+    }
+
     // Sanitize the prompt to prevent command injection
-    std::string safePrompt = escapeForShell(prompt);
+    std::string safePrompt = escapeForShell(fullPrompt);
+
+    // Build absolute path to gemini-cli (since we're running from output folder)
+    std::string geminiCliPath = executableDir + "/gemini-cli/scripts/start.js";
 
     while (!success) {
         std::string model = getCurrentModel();
-        std::cout << "[GemStack] Processing with model " << model << ": " << safePrompt << std::endl;
+        std::cout << "[GemStack] Processing with model " << model << std::endl;
 
-        std::string fullCommand = "node gemini-cli/scripts/start.js --yolo --model " + model + " " + safePrompt;
-        auto [result, output] = executeWithOutput(fullCommand);
+        std::string fullCommand = "node \"" + geminiCliPath + "\" --yolo --model " + model + " " + safePrompt;
+
+        // Execute with output folder as working directory
+        auto [result, output] = executeWithOutput(fullCommand, workspaceOutputPath);
         finalOutput = output;
 
         if (result == 0 && !isModelExhausted(output)) {
@@ -395,7 +465,7 @@ void runReflectiveMode(const std::string& initialPrompt, int maxIterations) {
     std::cout << "\n========================================" << std::endl;
     std::cout << "[GemStack] REFLECTIVE MODE ACTIVATED" << std::endl;
     std::cout << "[GemStack] Max iterations: " << maxIterations << std::endl;
-    std::cout << "[GemStack] Log file: " << REFLECTION_LOG_FILE << std::endl;
+    std::cout << "[GemStack] Log file: " << getReflectionLogPath() << std::endl;
     std::cout << "========================================\n" << std::endl;
 
     // Clear previous reflection log
@@ -524,7 +594,7 @@ void runReflectiveMode(const std::string& initialPrompt, int maxIterations) {
 
     std::cout << "\n========================================" << std::endl;
     std::cout << "[GemStack] REFLECTIVE MODE COMPLETE" << std::endl;
-    std::cout << "[GemStack] See " << REFLECTION_LOG_FILE << " for full session log" << std::endl;
+    std::cout << "[GemStack] See " << getReflectionLogPath() << " for full session log" << std::endl;
     std::cout << "========================================\n" << std::endl;
 }
 
@@ -566,6 +636,13 @@ void printUsage(const char* programName) {
 
 int main(int argc, char* argv[]) {
     std::cout << "Welcome to GemStack!" << std::endl;
+
+    // Initialize workspace folders
+    if (!initializeWorkspace()) {
+        std::cerr << "Failed to initialize workspace. Exiting." << std::endl;
+        return 1;
+    }
+    std::cout << std::endl;
 
     // Parse command line arguments
     bool reflectMode = false;

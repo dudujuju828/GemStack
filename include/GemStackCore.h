@@ -35,4 +35,11 @@ bool isModelExhausted(const std::string& output);
 // String utilities
 std::string trim(const std::string& str);
 
+// Path utilities
+std::string normalizePath(const std::string& path);
+std::string joinPath(const std::string& base, const std::string& relative);
+
+// Output parsing utilities
+std::string extractFirstMeaningfulLine(const std::string& output, size_t maxLength = 200);
+
 #endif // GEMSTACK_CORE_H
