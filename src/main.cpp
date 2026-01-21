@@ -193,6 +193,10 @@ inline std::string extractOutputSummary(const std::string& output, size_t maxLen
 std::atomic<bool> animationRunning{false};
 std::thread animationThread;
 
+// Task progress tracking
+std::atomic<int> totalTasks{0};
+std::atomic<int> currentTaskNum{0};
+
 #ifdef _WIN32
 // Windows: Write directly to console buffer at specific position (non-blocking, independent of cout)
 void writeStatusLine(const std::string& text, bool clear = false) {
@@ -230,13 +234,20 @@ void writeStatusLine(const std::string& text, bool clear = false) {
 }
 
 void statusAnimation() {
-    const std::string baseText = "GemStack Generating";
     int dotCount = 0;
 
     while (animationRunning.load()) {
+        // Build progress prefix if we have task info
+        std::string progressPrefix;
+        int current = currentTaskNum.load();
+        int total = totalTasks.load();
+        if (total > 0 && current > 0) {
+            progressPrefix = "[" + std::to_string(current) + "/" + std::to_string(total) + "] ";
+        }
+
         std::string dots(dotCount + 1, '.');
         std::string padding(3 - dotCount, ' ');
-        std::string statusText = baseText + " " + dots + padding;
+        std::string statusText = progressPrefix + "GemStack Generating " + dots + padding;
 
         writeStatusLine(statusText);
 
@@ -251,7 +262,6 @@ void statusAnimation() {
 #else
 // Unix: Use ANSI codes but write to stderr to avoid interfering with stdout
 void statusAnimation() {
-    const std::string baseText = "GemStack Generating";
     int dotCount = 0;
 
     // Get terminal height
@@ -262,12 +272,21 @@ void statusAnimation() {
     }
 
     while (animationRunning.load()) {
+        // Build progress prefix if we have task info
+        std::string progressPrefix;
+        int current = currentTaskNum.load();
+        int total = totalTasks.load();
+        if (total > 0 && current > 0) {
+            progressPrefix = "[" + std::to_string(current) + "/" + std::to_string(total) + "] ";
+        }
+
         std::string dots(dotCount + 1, '.');
         std::string padding(3 - dotCount, ' ');
+        std::string statusText = progressPrefix + "GemStack Generating";
 
         // Write to stderr using ANSI codes - independent of stdout buffering
         fprintf(stderr, "\033[s\033[%d;1H\033[K\033[36m%s %s%s\033[0m\033[u",
-                termHeight, baseText.c_str(), dots.c_str(), padding.c_str());
+                termHeight, statusText.c_str(), dots.c_str(), padding.c_str());
         fflush(stderr);
 
         dotCount = (dotCount + 1) % 3;
@@ -657,6 +676,9 @@ void worker() {
             isBusy = true;
         }
 
+        // Increment task counter
+        currentTaskNum.fetch_add(1);
+
         // Execute the command with model fallback
         startAnimation();
         auto [success, output] = executeSinglePrompt(command);
@@ -823,10 +845,17 @@ int main(int argc, char* argv[]) {
     // Load commands from file
     bool fileCommandsLoaded = loadCommandsFromFile("GemStackQueue.txt");
 
+    // Set total task count for progress display
+    {
+        std::lock_guard<std::mutex> lock(queueMutex);
+        totalTasks.store(static_cast<int>(commandQueue.size()));
+    }
+    currentTaskNum.store(0);
+
     std::thread workerThread(worker);
 
     if (fileCommandsLoaded) {
-        std::cout << "[GemStack] Processing file commands in batch mode..." << std::endl;
+        std::cout << "[GemStack] Processing " << totalTasks.load() << " task(s) in batch mode..." << std::endl;
         while (true) {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
             bool empty;
