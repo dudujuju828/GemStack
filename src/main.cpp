@@ -16,6 +16,10 @@
 #include <filesystem>
 
 #include <GemStackCore.h>
+#include <GitAutoCommit.h>
+
+// Global auto-commit handler
+GitAutoCommit g_autoCommit;
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -429,6 +433,36 @@ std::pair<int, std::string> executeWithOutput(const std::string& command, const 
 }
 #endif
 
+// Extract a short summary from a prompt for commit messages
+static std::string extractPromptSummary(const std::string& prompt) {
+    std::string summary = prompt;
+
+    // Remove "prompt " wrapper if present
+    if (summary.find("prompt \"") == 0) {
+        summary = summary.substr(8);
+        if (!summary.empty() && summary.back() == '"') {
+            summary.pop_back();
+        }
+    }
+
+    // Remove CHECKPOINT prefix if present (from specify directives)
+    size_t checkpointPos = summary.find("CHECKPOINT");
+    if (checkpointPos == 0) {
+        size_t taskPos = summary.find("proceed with the following task:");
+        if (taskPos != std::string::npos) {
+            summary = summary.substr(taskPos + 33); // Length of "proceed with the following task:"
+            summary = trim(summary);
+        }
+    }
+
+    // Truncate to reasonable length for commit message
+    if (summary.length() > 80) {
+        summary = summary.substr(0, 77) + "...";
+    }
+
+    return summary;
+}
+
 // Execute a single prompt and return the result
 std::pair<bool, std::string> executeSinglePrompt(const std::string& prompt) {
     bool success = false;
@@ -450,6 +484,10 @@ std::pair<bool, std::string> executeSinglePrompt(const std::string& prompt) {
         if (result == 0 && !isModelExhausted(output)) {
             std::cout << "[GemStack] Command finished successfully." << std::endl;
             success = true;
+
+            // Perform auto-commit if enabled (uses GitAutoCommit module)
+            std::string promptSummary = extractPromptSummary(prompt);
+            g_autoCommit.maybeCommit(promptSummary);
         } else if (isModelExhausted(output)) {
             if (!downgradeModel()) {
                 std::cerr << "[GemStack] Command failed: all models exhausted." << std::endl;
@@ -631,12 +669,20 @@ void worker() {
 void printUsage(const char* programName) {
     std::cout << "Usage: " << programName << " [OPTIONS]\n\n";
     std::cout << "Options:\n";
-    std::cout << "  --reflect <prompt>     Run in reflective mode with the given initial prompt\n";
-    std::cout << "  --iterations <n>       Set max iterations for reflective mode (default: 5)\n";
-    std::cout << "  --help                 Show this help message\n\n";
+    std::cout << "  --reflect <prompt>             Run in reflective mode with the given initial prompt\n";
+    std::cout << "  --iterations <n>               Set max iterations for reflective mode (default: 5)\n";
+    std::cout << "  --config <path>                Load configuration from specified file\n";
+    std::cout << "  --auto-commit                  Force enable auto-commit for this run\n";
+    std::cout << "  --no-auto-commit               Force disable auto-commit for this run\n";
+    std::cout << "  --commit-prefix <text>         Override commit message prefix\n";
+    std::cout << "  --commit-include-prompt <bool> Include prompt summary in commits (true/false)\n";
+    std::cout << "  --help                         Show this help message\n\n";
+    std::cout << "Auto-commit precedence: CLI flags > config file > defaults\n\n";
     std::cout << "Examples:\n";
     std::cout << "  " << programName << " --reflect \"Build a simple calculator app\"\n";
     std::cout << "  " << programName << " --reflect \"Create a todo list\" --iterations 10\n";
+    std::cout << "  " << programName << " --auto-commit --commit-prefix \"[AI]\"\n";
+    std::cout << "  " << programName << " --config ./my-config.txt\n";
 }
 
 int main(int argc, char* argv[]) {
@@ -647,12 +693,16 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    std::cout << std::endl;
-
-    // Parse command line arguments
+    // Parse command line arguments (first pass to get config path)
+    std::string configPath = "GemStackConfig.txt";  // Default
     bool reflectMode = false;
     std::string reflectPrompt;
     int iterations = 5;  // Default iterations
+
+    // CLI overrides for auto-commit
+    std::optional<bool> cliAutoCommitEnabled;
+    std::optional<std::string> cliCommitPrefix;
+    std::optional<bool> cliCommitIncludePrompt;
 
     const int MAX_ITERATIONS = 100;  // Safety cap
 
@@ -662,6 +712,14 @@ int main(int argc, char* argv[]) {
         if (arg == "--help" || arg == "-h") {
             printUsage(argv[0]);
             return 0;
+        } else if (arg == "--config") {
+            if (i + 1 < argc) {
+                configPath = argv[++i];
+            } else {
+                std::cerr << "Error: --config requires a path argument" << std::endl;
+                printUsage(argv[0]);
+                return 1;
+            }
         } else if (arg == "--reflect") {
             reflectMode = true;
             if (i + 1 < argc) {
@@ -694,8 +752,55 @@ int main(int argc, char* argv[]) {
                 std::cerr << "Error: --iterations requires a numeric argument" << std::endl;
                 return 1;
             }
+        } else if (arg == "--auto-commit") {
+            cliAutoCommitEnabled = true;
+        } else if (arg == "--no-auto-commit") {
+            cliAutoCommitEnabled = false;
+        } else if (arg == "--commit-prefix") {
+            if (i + 1 < argc) {
+                cliCommitPrefix = argv[++i];
+            } else {
+                std::cerr << "Error: --commit-prefix requires a text argument" << std::endl;
+                printUsage(argv[0]);
+                return 1;
+            }
+        } else if (arg == "--commit-include-prompt") {
+            if (i + 1 < argc) {
+                std::string val = argv[++i];
+                if (val == "true" || val == "1" || val == "yes") {
+                    cliCommitIncludePrompt = true;
+                } else if (val == "false" || val == "0" || val == "no") {
+                    cliCommitIncludePrompt = false;
+                } else {
+                    std::cerr << "Error: --commit-include-prompt requires true or false" << std::endl;
+                    return 1;
+                }
+            } else {
+                std::cerr << "Error: --commit-include-prompt requires true or false" << std::endl;
+                return 1;
+            }
         }
     }
+
+    // Load configuration (optional - uses defaults if file doesn't exist)
+    loadConfig(configPath);
+
+    // Initialize GitAutoCommit with config file settings
+    GitAutoCommitConfig autoCommitConfig;
+    autoCommitConfig.enabled = g_config.autoCommitEnabled;
+    autoCommitConfig.messagePrefix = g_config.autoCommitMessagePrefix;
+    autoCommitConfig.includePrompt = g_config.autoCommitIncludePrompt;
+    g_autoCommit.setConfig(autoCommitConfig);
+
+    // Apply CLI overrides (these take precedence over config file)
+    g_autoCommit.applyCliOverrides(cliAutoCommitEnabled, cliCommitPrefix, cliCommitIncludePrompt);
+
+    // Log effective auto-commit state
+    if (g_autoCommit.isEnabled()) {
+        std::cout << "[GemStack] Auto-commit is enabled" << std::endl;
+    }
+
+    std::cout << std::endl;
 
     // Run in reflective mode if specified
     if (reflectMode) {

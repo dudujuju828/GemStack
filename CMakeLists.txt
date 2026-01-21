@@ -21,7 +21,7 @@ set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(googletest)
 
 # Library for core logic (shared between main app and tests)
-add_library(GemStackCore src/GemStackCore.cpp)
+add_library(GemStackCore src/GemStackCore.cpp src/GitAutoCommit.cpp)
 target_include_directories(GemStackCore PUBLIC include)
 
 # Main executable

@@ -14,6 +14,22 @@ extern std::condition_variable queueCV;
 extern bool running;
 extern std::atomic<bool> isBusy;
 
+// Configuration structure
+struct GemStackConfig {
+    // Auto-commit settings
+    bool autoCommitEnabled = false;
+    std::string autoCommitMessagePrefix = "[GemStack]";
+    bool autoCommitIncludePrompt = true;  // Include prompt summary in commit message
+
+    // Future config options can be added here
+};
+
+extern GemStackConfig g_config;
+
+// Config file management
+bool loadConfig(const std::string& filename = "GemStackConfig.txt");
+GemStackConfig getDefaultConfig();
+
 // Model fallback system - ordered from best to least-best
 extern std::vector<std::string> modelFallbackList;
 extern std::atomic<size_t> currentModelIndex;

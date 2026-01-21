@@ -3,12 +3,71 @@
 #include <sstream>
 #include <iostream>
 #include <algorithm>
+#include <cstdlib>
+#include <array>
 
 std::queue<std::string> commandQueue;
 std::mutex queueMutex;
 std::condition_variable queueCV;
 bool running = true;
 std::atomic<bool> isBusy{false};
+
+// Global config instance
+GemStackConfig g_config;
+
+GemStackConfig getDefaultConfig() {
+    return GemStackConfig();
+}
+
+bool loadConfig(const std::string& filename) {
+    std::ifstream file(filename);
+    if (!file.is_open()) {
+        // Config file is optional, use defaults
+        g_config = getDefaultConfig();
+        return false;
+    }
+
+    std::cout << "[GemStack] Loading configuration from " << filename << std::endl;
+
+    std::string line;
+    while (std::getline(file, line)) {
+        std::string trimmedLine = trim(line);
+
+        // Skip empty lines and comments
+        if (trimmedLine.empty() || trimmedLine[0] == '#' || trimmedLine[0] == ';') {
+            continue;
+        }
+
+        // Parse key=value pairs
+        size_t equalsPos = trimmedLine.find('=');
+        if (equalsPos == std::string::npos) {
+            continue;
+        }
+
+        std::string key = trim(trimmedLine.substr(0, equalsPos));
+        std::string value = trim(trimmedLine.substr(equalsPos + 1));
+
+        // Remove surrounding quotes from value if present
+        if (value.size() >= 2 && value.front() == '"' && value.back() == '"') {
+            value = value.substr(1, value.size() - 2);
+        }
+
+        // Map configuration keys
+        if (key == "autoCommitEnabled" || key == "auto_commit_enabled") {
+            g_config.autoCommitEnabled = (value == "true" || value == "1" || value == "yes");
+        } else if (key == "autoCommitMessagePrefix" || key == "auto_commit_message_prefix") {
+            g_config.autoCommitMessagePrefix = value;
+        } else if (key == "autoCommitIncludePrompt" || key == "auto_commit_include_prompt") {
+            g_config.autoCommitIncludePrompt = (value == "true" || value == "1" || value == "yes");
+        }
+    }
+
+    if (g_config.autoCommitEnabled) {
+        std::cout << "[GemStack] Auto-commit enabled with prefix: \"" << g_config.autoCommitMessagePrefix << "\"" << std::endl;
+    }
+
+    return true;
+}
 
 // Model fallback list - ordered from best to least-best
 std::vector<std::string> modelFallbackList = {
@@ -156,6 +215,9 @@ bool loadCommandsFromFile(const std::string& filename) {
     // Accumulated specify statements to prepend to the next prompt
     std::vector<std::string> pendingSpecifications;
 
+    // Current block's goal (high-level description of final product)
+    std::string currentBlockGoal;
+
     while (std::getline(file, line)) {
         std::string trimmedLine = trim(line);
 
@@ -179,6 +241,7 @@ bool loadCommandsFromFile(const std::string& filename) {
             inPromptBlock = true;
             promptBlockCount++;
             pendingSpecifications.clear(); // Clear specs at block start
+            currentBlockGoal.clear();      // Clear goal at block start
             std::cout << "[GemStack] Entering PromptBlock " << promptBlockCount << std::endl;
             continue;
         }
@@ -190,12 +253,29 @@ bool loadCommandsFromFile(const std::string& filename) {
                           << " specify statement(s) at end of block with no following prompt" << std::endl;
                 pendingSpecifications.clear();
             }
+            currentBlockGoal.clear(); // Clear goal when exiting block
             std::cout << "[GemStack] Exiting PromptBlock " << promptBlockCount << std::endl;
             continue;
         }
 
         // Skip empty lines
         if (trimmedLine.empty()) {
+            continue;
+        }
+
+        // Handle 'goal' directive - sets high-level objective for the block
+        if (startsWithDirective(trimmedLine, "goal ")) {
+            std::string goalContent = extractDirectiveContent(trimmedLine, "goal ");
+            if (!goalContent.empty()) {
+                if (!currentBlockGoal.empty()) {
+                    std::cout << "[GemStack] Warning: Multiple goals in block " << promptBlockCount
+                              << ". Overwriting previous goal." << std::endl;
+                }
+                currentBlockGoal = goalContent;
+                std::cout << "[GemStack] Goal set: \""
+                          << (goalContent.length() > 60 ? goalContent.substr(0, 60) + "..." : goalContent)
+                          << "\"" << std::endl;
+            }
             continue;
         }
 
@@ -211,26 +291,53 @@ bool loadCommandsFromFile(const std::string& filename) {
             continue;
         }
 
-        // Handle 'prompt' directive - may have specifications prepended
+        // Handle 'prompt' directive - may have goal and specifications prepended
         if (startsWithDirective(trimmedLine, "prompt ")) {
             std::string promptContent = extractDirectiveContent(trimmedLine, "prompt ");
 
             if (!promptContent.empty()) {
                 std::string finalCommand;
+                std::string augmentedPrompt;
 
-                // If there are pending specifications, prepend them as a verification checkpoint
-                if (!pendingSpecifications.empty()) {
-                    std::string verificationBlock = "CHECKPOINT - Before proceeding, verify the following expectations are met. If any are NOT correct, fix them first and explain what was missing:\n";
-                    for (size_t i = 0; i < pendingSpecifications.size(); i++) {
-                        verificationBlock += "  " + std::to_string(i + 1) + ". " + pendingSpecifications[i] + "\n";
+                // Build the augmented prompt with goal and/or specifications
+                bool hasGoal = !currentBlockGoal.empty();
+                bool hasSpecs = !pendingSpecifications.empty();
+
+                if (hasGoal || hasSpecs) {
+                    // Add goal context if present
+                    if (hasGoal) {
+                        augmentedPrompt += "GOAL - The ultimate objective you are working towards:\n";
+                        augmentedPrompt += "  " + currentBlockGoal + "\n\n";
                     }
-                    verificationBlock += "\nAfter verification is complete, proceed with the following task:\n" + promptContent;
 
-                    finalCommand = "prompt \"" + verificationBlock + "\"";
+                    // Add verification checkpoints if present
+                    if (hasSpecs) {
+                        augmentedPrompt += "CHECKPOINT - Before proceeding, verify the following expectations are met. If any are NOT correct, fix them first and explain what was missing:\n";
+                        for (size_t i = 0; i < pendingSpecifications.size(); i++) {
+                            augmentedPrompt += "  " + std::to_string(i + 1) + ". " + pendingSpecifications[i] + "\n";
+                        }
+                        augmentedPrompt += "\n";
+                        pendingSpecifications.clear();
+                    }
 
-                    std::cout << "[GemStack] Prompt with " << pendingSpecifications.size()
-                              << " verification checkpoint(s) queued" << std::endl;
-                    pendingSpecifications.clear();
+                    // Add the actual task
+                    if (hasGoal && !hasSpecs) {
+                        augmentedPrompt += "CURRENT TASK:\n" + promptContent;
+                    } else {
+                        augmentedPrompt += "After verification is complete, proceed with the following task:\n" + promptContent;
+                    }
+
+                    finalCommand = "prompt \"" + augmentedPrompt + "\"";
+
+                    if (hasGoal && hasSpecs) {
+                        std::cout << "[GemStack] Prompt with goal and " << pendingSpecifications.size()
+                                  << " checkpoint(s) queued" << std::endl;
+                    } else if (hasGoal) {
+                        std::cout << "[GemStack] Prompt with goal queued" << std::endl;
+                    } else {
+                        std::cout << "[GemStack] Prompt with " << pendingSpecifications.size()
+                                  << " verification checkpoint(s) queued" << std::endl;
+                    }
                 } else {
                     finalCommand = trimmedLine; // Use original prompt line
                     std::cout << "[GemStack] Prompt queued from " << filename << std::endl;
@@ -245,7 +352,7 @@ bool loadCommandsFromFile(const std::string& filename) {
             continue;
         }
 
-        // For any other command (not prompt or specify), queue it directly
+        // For any other command (not prompt, specify, or goal), queue it directly
         // This handles things like --help, --version, etc.
         {
             std::lock_guard<std::mutex> lock(queueMutex);
