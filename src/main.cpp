@@ -14,111 +14,19 @@
 #include <vector>
 #include <stdexcept>
 #include <filesystem>
+#include <optional>
 
 #include <GemStackCore.h>
 #include <GitAutoCommit.h>
+#include <ProcessExecutor.h>
+#include <ConsoleUI.h>
+#include <CliManager.h>
 
 // Global auto-commit handler
 GitAutoCommit g_autoCommit;
 
-#ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-#else
-#define popen _popen
-#define pclose _pclose
-#include <sys/ioctl.h>
-#include <unistd.h>
-#endif
-
 namespace fs = std::filesystem;
 
-#include "EmbeddedCli.h"
-
-// Global path to the CLI entry point
-std::string g_geminiCliPath;
-
-std::string getHomeDirectory() {
-#ifdef _WIN32
-    const char* home = getenv("USERPROFILE");
-    if (home) return std::string(home);
-    const char* drive = getenv("HOMEDRIVE");
-    const char* path = getenv("HOMEPATH");
-    if (drive && path) return std::string(drive) + std::string(path);
-    return ".";
-#else
-    const char* home = getenv("HOME");
-    if (home) return std::string(home);
-    return ".";
-#endif
-}
-
-bool extractEmbeddedCli(const std::string& targetDir) {
-    // Check if main file exists (simple check)
-    if (fs::exists(targetDir + "/gemini.js")) {
-        return true;
-    }
-
-    std::cout << "[GemStack] Extracting embedded Gemini CLI to " << targetDir << "..." << std::endl;
-    
-    try {
-        fs::create_directories(targetDir);
-    } catch (const fs::filesystem_error& e) {
-        std::cerr << "Error creating directory: " << e.what() << std::endl;
-        return false;
-    }
-
-    std::string tempZipPath = targetDir + "/cli.zip";
-    std::ofstream zipFile(tempZipPath, std::ios::binary);
-    if (!zipFile) {
-        std::cerr << "Failed to create temp zip file: " << tempZipPath << std::endl;
-        return false;
-    }
-    zipFile.write(reinterpret_cast<const char*>(EMBEDDED_CLI_DATA), EMBEDDED_CLI_SIZE);
-    zipFile.close();
-    
-    std::string command = "tar -xf \"" + tempZipPath + "\" -C \"" + targetDir + "\"";
-    int result = system(command.c_str());
-    
-    try {
-        fs::remove(tempZipPath);
-    } catch (...) {}
-    
-    if (result != 0) {
-        std::cerr << "Failed to extract CLI using tar." << std::endl;
-        #ifdef _WIN32
-        std::cerr << "Trying PowerShell Expand-Archive..." << std::endl;
-        std::ofstream zipFile2(tempZipPath, std::ios::binary);
-        zipFile2.write(reinterpret_cast<const char*>(EMBEDDED_CLI_DATA), EMBEDDED_CLI_SIZE);
-        zipFile2.close();
-        
-        std::string psCommand = "powershell -Command \"Expand-Archive -Path '" + tempZipPath + "' -DestinationPath '" + targetDir + "' -Force\"";
-        result = system(psCommand.c_str());
-        try { fs::remove(tempZipPath); } catch (...) {}
-        
-        if (result != 0) {
-             std::cerr << "Failed to extract CLI using PowerShell." << std::endl;
-             return false;
-        }
-        #else
-        return false;
-        #endif
-    }
-    
-    return true;
-}
-
-bool initializeCli() {
-    std::string home = getHomeDirectory();
-    std::string cliDir = joinPath(home, ".gemstack/gemini-cli");
-    
-    if (!extractEmbeddedCli(cliDir)) {
-        return false;
-    }
-    
-    g_geminiCliPath = joinPath(cliDir, "gemini.js");
-    return true;
-}
 // Reflection mode prompt log
 struct ReflectionLogEntry {
     int iteration;
@@ -189,269 +97,6 @@ inline std::string extractOutputSummary(const std::string& output, size_t maxLen
     return extractFirstMeaningfulLine(output, maxLength);
 }
 
-// Animation control
-std::atomic<bool> animationRunning{false};
-std::thread animationThread;
-
-// Task progress tracking
-std::atomic<int> totalTasks{0};
-std::atomic<int> currentTaskNum{0};
-
-#ifdef _WIN32
-// Windows: Write directly to console buffer at specific position (non-blocking, independent of cout)
-void writeStatusLine(const std::string& text, bool clear = false) {
-    HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
-    CONSOLE_SCREEN_BUFFER_INFO csbi;
-
-    if (!GetConsoleScreenBufferInfo(hConsole, &csbi)) {
-        return;
-    }
-
-    // Calculate bottom row position within the visible window
-    SHORT bottomRow = csbi.srWindow.Bottom;
-    COORD statusPos = { 0, bottomRow };
-
-    // Prepare the text to write (pad with spaces to clear the line)
-    std::string paddedText = text;
-    int consoleWidth = csbi.srWindow.Right - csbi.srWindow.Left + 1;
-    if (static_cast<int>(paddedText.length()) < consoleWidth) {
-        paddedText.append(consoleWidth - paddedText.length(), ' ');
-    }
-
-    // Write directly to console buffer - completely independent of cout
-    DWORD written;
-    WriteConsoleOutputCharacterA(hConsole, paddedText.c_str(),
-                                  static_cast<DWORD>(paddedText.length()),
-                                  statusPos, &written);
-
-    // Set color attributes for the status line (cyan on black)
-    if (!clear && !text.empty()) {
-        std::vector<WORD> attrs(text.length(), FOREGROUND_GREEN | FOREGROUND_BLUE | FOREGROUND_INTENSITY);
-        WriteConsoleOutputAttribute(hConsole, attrs.data(),
-                                    static_cast<DWORD>(attrs.size()),
-                                    statusPos, &written);
-    }
-}
-
-void statusAnimation() {
-    int dotCount = 0;
-
-    while (animationRunning.load()) {
-        // Build progress prefix if we have task info
-        std::string progressPrefix;
-        int current = currentTaskNum.load();
-        int total = totalTasks.load();
-        if (total > 0 && current > 0) {
-            progressPrefix = "[" + std::to_string(current) + "/" + std::to_string(total) + "] ";
-        }
-
-        std::string dots(dotCount + 1, '.');
-        std::string padding(3 - dotCount, ' ');
-        std::string statusText = progressPrefix + "GemStack Generating " + dots + padding;
-
-        writeStatusLine(statusText);
-
-        dotCount = (dotCount + 1) % 3;
-        std::this_thread::sleep_for(std::chrono::milliseconds(400));
-    }
-
-    // Clear the status line when done
-    writeStatusLine("", true);
-}
-
-#else
-// Unix: Use ANSI codes but write to stderr to avoid interfering with stdout
-void statusAnimation() {
-    int dotCount = 0;
-
-    // Get terminal height
-    int termHeight = 24;
-    struct winsize w;
-    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == 0) {
-        termHeight = w.ws_row;
-    }
-
-    while (animationRunning.load()) {
-        // Build progress prefix if we have task info
-        std::string progressPrefix;
-        int current = currentTaskNum.load();
-        int total = totalTasks.load();
-        if (total > 0 && current > 0) {
-            progressPrefix = "[" + std::to_string(current) + "/" + std::to_string(total) + "] ";
-        }
-
-        std::string dots(dotCount + 1, '.');
-        std::string padding(3 - dotCount, ' ');
-        std::string statusText = progressPrefix + "GemStack Generating";
-
-        // Write to stderr using ANSI codes - independent of stdout buffering
-        fprintf(stderr, "\033[s\033[%d;1H\033[K\033[36m%s %s%s\033[0m\033[u",
-                termHeight, statusText.c_str(), dots.c_str(), padding.c_str());
-        fflush(stderr);
-
-        dotCount = (dotCount + 1) % 3;
-        std::this_thread::sleep_for(std::chrono::milliseconds(400));
-    }
-
-    // Clear the status line when done
-    fprintf(stderr, "\033[s\033[%d;1H\033[K\033[u", termHeight);
-    fflush(stderr);
-}
-#endif
-
-void startAnimation() {
-    if (animationRunning.load()) return;  // Already running
-    animationRunning.store(true);
-    animationThread = std::thread(statusAnimation);
-}
-
-void stopAnimation() {
-    animationRunning.store(false);
-    if (animationThread.joinable()) {
-        animationThread.join();
-    }
-}
-
-#ifdef _WIN32
-// Windows implementation using CreateProcess with proper console handling
-std::pair<int, std::string> executeWithOutput(const std::string& command, const std::string& workingDir = "") {
-    std::string output;
-
-    // Create pipes for capturing stdout/stderr
-    HANDLE hStdOutRead = NULL;
-    HANDLE hStdOutWrite = NULL;
-    HANDLE hStdErrWrite = NULL;
-
-    SECURITY_ATTRIBUTES saAttr;
-    saAttr.nLength = sizeof(SECURITY_ATTRIBUTES);
-    saAttr.bInheritHandle = TRUE;
-    saAttr.lpSecurityDescriptor = NULL;
-
-    // Create pipe for stdout
-    if (!CreatePipe(&hStdOutRead, &hStdOutWrite, &saAttr, 0)) {
-        return {-1, "Failed to create stdout pipe"};
-    }
-
-    // Ensure the read handle is not inherited
-    if (!SetHandleInformation(hStdOutRead, HANDLE_FLAG_INHERIT, 0)) {
-        CloseHandle(hStdOutRead);
-        CloseHandle(hStdOutWrite);
-        return {-1, "Failed to set handle information"};
-    }
-
-    // Duplicate stdout write handle for stderr
-    if (!DuplicateHandle(GetCurrentProcess(), hStdOutWrite,
-                         GetCurrentProcess(), &hStdErrWrite,
-                         0, TRUE, DUPLICATE_SAME_ACCESS)) {
-        CloseHandle(hStdOutRead);
-        CloseHandle(hStdOutWrite);
-        return {-1, "Failed to duplicate handle for stderr"};
-    }
-
-    // Set up the process startup info
-    STARTUPINFOA si;
-    PROCESS_INFORMATION pi;
-    ZeroMemory(&si, sizeof(si));
-    si.cb = sizeof(si);
-    si.hStdOutput = hStdOutWrite;
-    si.hStdError = hStdErrWrite;
-    si.dwFlags |= STARTF_USESTDHANDLES;
-    ZeroMemory(&pi, sizeof(pi));
-
-    // Build command line - use cmd.exe /c to ensure proper shell environment
-    std::string cmdLine = "cmd.exe /c " + command;
-
-    // Determine working directory (NULL means inherit from parent)
-    const char* lpCurrentDirectory = workingDir.empty() ? NULL : workingDir.c_str();
-
-    // Create the child process
-    // Using CREATE_NO_WINDOW to prevent console window popup
-    // The process inherits our console for node-pty compatibility
-    BOOL success = CreateProcessA(
-        NULL,                          // Application name (use command line)
-        const_cast<char*>(cmdLine.c_str()), // Command line
-        NULL,                          // Process security attributes
-        NULL,                          // Thread security attributes
-        TRUE,                          // Inherit handles
-        0,                             // Creation flags - inherit parent console
-        NULL,                          // Environment (inherit from parent)
-        lpCurrentDirectory,            // Current directory for the child process
-        &si,                           // Startup info
-        &pi                            // Process info
-    );
-
-    // Close write ends of pipes in parent - child has them now
-    CloseHandle(hStdOutWrite);
-    CloseHandle(hStdErrWrite);
-
-    if (!success) {
-        CloseHandle(hStdOutRead);
-        return {-1, "Failed to create process: " + std::to_string(GetLastError())};
-    }
-
-    // Read output from pipe in a loop
-    char buffer[256];
-    DWORD bytesRead;
-
-    while (true) {
-        BOOL readSuccess = ReadFile(hStdOutRead, buffer, sizeof(buffer) - 1, &bytesRead, NULL);
-        if (!readSuccess || bytesRead == 0) {
-            break;
-        }
-        buffer[bytesRead] = '\0';
-        std::string chunk(buffer, bytesRead);
-        output += chunk;
-        // Print to console in real-time
-        std::cout << chunk;
-        std::cout.flush();
-    }
-
-    // Wait for the process to complete
-    WaitForSingleObject(pi.hProcess, INFINITE);
-
-    // Get exit code
-    DWORD exitCode;
-    GetExitCodeProcess(pi.hProcess, &exitCode);
-
-    // Cleanup
-    CloseHandle(pi.hProcess);
-    CloseHandle(pi.hThread);
-    CloseHandle(hStdOutRead);
-
-    return {static_cast<int>(exitCode), output};
-}
-
-#else
-// Unix implementation using popen
-std::pair<int, std::string> executeWithOutput(const std::string& command, const std::string& workingDir = "") {
-    std::string output;
-    std::array<char, 256> buffer;
-
-    // Build command with optional directory change
-    std::string fullCommand;
-    if (!workingDir.empty()) {
-        fullCommand = "cd \"" + workingDir + "\" && " + command + " 2>&1";
-    } else {
-        fullCommand = command + " 2>&1";
-    }
-
-    FILE* pipe = popen(fullCommand.c_str(), "r");
-    if (!pipe) {
-        return {-1, "Failed to execute command"};
-    }
-
-    while (fgets(buffer.data(), buffer.size(), pipe) != nullptr) {
-        std::string chunk = buffer.data();
-        output += chunk;
-        // Also print to console in real-time
-        std::cout << chunk;
-    }
-
-    int result = pclose(pipe);
-    return {result, output};
-}
-#endif
-
 // Extract a short summary from a prompt for commit messages
 static std::string extractPromptSummary(const std::string& prompt) {
     std::string summary = prompt;
@@ -494,10 +139,11 @@ std::pair<bool, std::string> executeSinglePrompt(const std::string& prompt) {
         std::string model = getCurrentModel();
         std::cout << "[GemStack] Processing with model " << model << std::endl;
 
-        std::string fullCommand = "node \"" + g_geminiCliPath + "\" --yolo --model " + model + " " + safePrompt;
+        std::string cliPath = CliManager::getGeminiCliPath();
+        std::string fullCommand = "node \"" + cliPath + "\" --yolo --model " + model + " " + safePrompt;
 
         // Execute in current directory
-        auto [result, output] = executeWithOutput(fullCommand, ".");
+        auto [result, output] = ProcessExecutor::execute(fullCommand, ".");
         finalOutput = output;
 
         if (result == 0 && !isModelExhausted(output)) {
@@ -523,12 +169,12 @@ std::pair<bool, std::string> executeSinglePrompt(const std::string& prompt) {
 }
 
 // Reflective mode: AI continuously improves by asking itself what to do next
-void runReflectiveMode(const std::string& initialPrompt, int maxIterations) {
-    std::cout << "\n========================================" << std::endl;
-    std::cout << "[GemStack] REFLECTIVE MODE ACTIVATED" << std::endl;
-    std::cout << "[GemStack] Max iterations: " << maxIterations << std::endl;
-    std::cout << "[GemStack] Log file: " << getReflectionLogPath() << std::endl;
-    std::cout << "========================================\n" << std::endl;
+void runReflectiveMode(const std::string& initialPrompt, int maxIterations, ConsoleUI& ui) {
+    std::cout << "\n========================================\n";
+    std::cout << "[GemStack] REFLECTIVE MODE ACTIVATED\n";
+    std::cout << "[GemStack] Max iterations: " << maxIterations << "\n";
+    std::cout << "[GemStack] Log file: " << getReflectionLogPath() << "\n";
+    std::cout << "========================================\n\n";
 
     // Clear previous reflection log
     reflectionLog.clear();
@@ -545,9 +191,9 @@ void runReflectiveMode(const std::string& initialPrompt, int maxIterations) {
     std::string currentPrompt = initialPrompt;
 
     for (int iteration = 1; iteration <= maxIterations; iteration++) {
-        std::cout << "\n----------------------------------------" << std::endl;
-        std::cout << "[GemStack] Reflection Iteration " << iteration << "/" << maxIterations << std::endl;
-        std::cout << "----------------------------------------\n" << std::endl;
+        std::cout << "\n----------------------------------------\n";
+        std::cout << "[GemStack] Reflection Iteration " << iteration << "/" << maxIterations << "\n";
+        std::cout << "----------------------------------------\n\n";
 
         // Build context from previous iterations
         std::string context = buildReflectionContext(initialGoal);
@@ -566,7 +212,7 @@ void runReflectiveMode(const std::string& initialPrompt, int maxIterations) {
         }
 
         // Start animation for this iteration
-        startAnimation();
+        ui.startAnimation();
 
         // Execute the current prompt (with context if applicable)
         auto [success, output] = executeSinglePrompt(promptWithContext);
@@ -594,7 +240,7 @@ void runReflectiveMode(const std::string& initialPrompt, int maxIterations) {
         writeReflectionLogToFile(initialGoal);
 
         if (!success) {
-            stopAnimation();
+            ui.stopAnimation();
             std::cerr << "[GemStack] Reflective mode stopped due to execution failure." << std::endl;
             break;
         }
@@ -622,7 +268,7 @@ void runReflectiveMode(const std::string& initialPrompt, int maxIterations) {
 
             auto [reflectSuccess, nextPrompt] = executeSinglePrompt(reflectionQuery);
 
-            stopAnimation();
+            ui.stopAnimation();
 
             if (!reflectSuccess) {
                 std::cerr << "[GemStack] Failed to generate next reflection prompt." << std::endl;
@@ -650,17 +296,17 @@ void runReflectiveMode(const std::string& initialPrompt, int maxIterations) {
 
             std::cout << "\n[GemStack] Next prompt: " << currentPrompt << std::endl;
         } else {
-            stopAnimation();
+            ui.stopAnimation();
         }
     }
 
-    std::cout << "\n========================================" << std::endl;
-    std::cout << "[GemStack] REFLECTIVE MODE COMPLETE" << std::endl;
-    std::cout << "[GemStack] See " << getReflectionLogPath() << " for full session log" << std::endl;
-    std::cout << "========================================\n" << std::endl;
+    std::cout << "\n========================================\n";
+    std::cout << "[GemStack] REFLECTIVE MODE COMPLETE\n";
+    std::cout << "[GemStack] See " << getReflectionLogPath() << " for full session log\n";
+    std::cout << "========================================\n\n";
 }
 
-void worker() {
+void worker(ConsoleUI& ui) {
     while (true) {
         std::string command;
         {
@@ -677,12 +323,12 @@ void worker() {
         }
 
         // Increment task counter
-        currentTaskNum.fetch_add(1);
+        ui.incrementTaskProgress();
 
         // Execute the command with model fallback
-        startAnimation();
+        ui.startAnimation();
         auto [success, output] = executeSinglePrompt(command);
-        stopAnimation();
+        ui.stopAnimation();
 
         isBusy = false;
     }
@@ -709,11 +355,6 @@ void printUsage(const char* programName) {
 
 int main(int argc, char* argv[]) {
     std::cout << "Welcome to GemStack!" << std::endl;
-
-    if (!initializeCli()) {
-        std::cerr << "Failed to initialize embedded CLI. Exiting." << std::endl;
-        return 1;
-    }
 
     // Parse command line arguments (first pass to get config path)
     std::string configPath = "GemStackConfig.txt";  // Default
@@ -804,6 +445,12 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    // Initialize CLI manager
+    if (!CliManager::initialize()) {
+        std::cerr << "Failed to initialize embedded CLI. Exiting." << std::endl;
+        return 1;
+    }
+
     // Load configuration (optional - uses defaults if file doesn't exist)
     loadConfig(configPath);
 
@@ -824,6 +471,9 @@ int main(int argc, char* argv[]) {
 
     std::cout << std::endl;
 
+    // Instantiate ConsoleUI
+    ConsoleUI ui;
+
     // Run in reflective mode if specified
     if (reflectMode) {
         // Validate prompt is not empty
@@ -834,7 +484,7 @@ int main(int argc, char* argv[]) {
 
         // Format the initial prompt
         std::string initialPrompt = "prompt \"" + reflectPrompt + "\"";
-        runReflectiveMode(initialPrompt, iterations);
+        runReflectiveMode(initialPrompt, iterations, ui);
         std::cout << "Goodbye!" << std::endl;
         return 0;
     }
@@ -848,14 +498,19 @@ int main(int argc, char* argv[]) {
     // Set total task count for progress display
     {
         std::lock_guard<std::mutex> lock(queueMutex);
-        totalTasks.store(static_cast<int>(commandQueue.size()));
+        // Update ConsoleUI with total tasks
+        ui.setTotalTasks(static_cast<int>(commandQueue.size()));
     }
-    currentTaskNum.store(0);
+    // Note: ConsoleUI initialized with current=0 by default
 
-    std::thread workerThread(worker);
+    // Start worker thread, passing UI instance
+    std::thread workerThread([&ui]() { worker(ui); });
 
     if (fileCommandsLoaded) {
-        std::cout << "[GemStack] Processing " << totalTasks.load() << " task(s) in batch mode..." << std::endl;
+        // Accessing commandQueue via mutex to check size is redundant as ui has it, 
+        // but ui.totalTasks is atomic.
+        // We can just print a message.
+        std::cout << "[GemStack] Processing tasks in batch mode..." << std::endl;
         while (true) {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
             bool empty;
@@ -886,6 +541,30 @@ int main(int argc, char* argv[]) {
             {
                 std::lock_guard<std::mutex> lock(queueMutex);
                 commandQueue.push(line);
+                // Update total tasks count in UI for correct progress display
+                // Need to get current total and add 1
+                // But ConsoleUI only has setTotalTasks.
+                // We should probably expose addTasks or something.
+                // For now, re-set it.
+                // Wait, commandQueue.size() includes the new one.
+                // Total tasks tracked by UI should ideally increase.
+                // But totalTasks in ConsoleUI is just for display "x/Total".
+                // If we are in interactive mode, Total keeps growing?
+                // The original code:
+                /*
+                {
+                    std::lock_guard<std::mutex> lock(queueMutex);
+                    commandQueue.push(line);
+                }
+                */
+                // It DID NOT update totalTasks in interactive loop in original code!
+                // So original code showed [x/InitTotal] ?
+                // Original: `totalTasks` was atomic global. Set once before worker start.
+                // Never updated in interactive loop.
+                // So interactive commands showed [1/0], [2/0]?
+                // I will replicate existing behavior or improve it. 
+                // Since I cannot change ConsoleUI API in this file easily without rewriting header, 
+                // I'll stick to existing behavior (no update).
             }
             queueCV.notify_one();
             std::cout << "[GemStack] Command queued." << std::endl;

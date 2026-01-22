@@ -21,7 +21,7 @@ set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(googletest)
 
 # Library for core logic (shared between main app and tests)
-add_library(GemStackCore src/GemStackCore.cpp src/GitAutoCommit.cpp)
+add_library(GemStackCore src/GemStackCore.cpp src/GitAutoCommit.cpp src/ProcessExecutor.cpp src/ConsoleUI.cpp src/CliManager.cpp)
 target_include_directories(GemStackCore PUBLIC include)
 
 # Main executable
@@ -31,7 +31,7 @@ target_link_libraries(GemStack PRIVATE GemStackCore)
 # Test executable
 enable_testing()
 
-add_executable(GemStackTests tests/test_parsing.cpp tests/test_git_auto_commit.cpp tests/test_multiline.cpp)
+add_executable(GemStackTests tests/test_parsing.cpp tests/test_git_auto_commit.cpp tests/test_multiline.cpp tests/test_process_executor.cpp)
 target_link_libraries(GemStackTests PRIVATE GemStackCore GTest::gtest_main)
 
 include(GoogleTest)
