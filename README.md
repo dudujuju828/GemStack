@@ -88,6 +88,7 @@ The `GemStackQueue.txt` file defines the commands to be executed. Place this fil
 #### Basic Syntax
 - **Structure**: Enclose all commands within a single `GemStackSTART` and `GemStackEND` block.
 - **Commands**: Each line inside the block is treated as a separate command to be executed.
+- **Strings**: Use quotes `"..."` for single-line strings, or braces `{{ ... }}` for multi-line strings.
 - **Blank Lines**: Empty lines are ignored.
 
 #### Basic Example
@@ -97,7 +98,10 @@ You can queue as many prompts or CLI arguments as needed within the block:
 ```text
 GemStackSTART
 prompt "Tell me a joke about C++"
-prompt "Explain how shared_ptr works"
+prompt {{
+  Explain how shared_ptr works
+  and compare it with unique_ptr
+}}
 --version
 --help
 GemStackEND

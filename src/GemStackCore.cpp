@@ -171,12 +171,21 @@ std::string trim(const std::string& str) {
     return str.substr(first, (last - first + 1));
 }
 
-// Extract content from a directive like: specify "content here" or prompt "content here"
-// Returns the content without quotes, or empty string if not a valid directive
+// Extract content from a directive like: specify "content" or prompt {{ content }}
 std::string extractDirectiveContent(const std::string& line, const std::string& directive) {
     size_t pos = line.find(directive);
     if (pos == std::string::npos) {
         return "";
+    }
+
+    // Check for braces {{ ... }}
+    size_t braceStart = line.find("{{", pos + directive.length());
+    if (braceStart != std::string::npos) {
+        size_t braceEnd = line.find("}}", braceStart + 2);
+        if (braceEnd != std::string::npos) {
+             return line.substr(braceStart + 2, braceEnd - braceStart - 2);
+        }
+        return ""; 
     }
 
     // Find the opening quote after the directive
@@ -218,8 +227,97 @@ bool loadCommandsFromFile(const std::string& filename) {
     // Current block's goal (high-level description of final product)
     std::string currentBlockGoal;
 
+    // Multi-line parsing state
+    bool inMultiLine = false;
+    std::string multiLineBuffer;
+    std::string currentMultiLineDirective; // "prompt ", "specify ", "goal "
+
     while (std::getline(file, line)) {
         std::string trimmedLine = trim(line);
+
+        // Handle multi-line content accumulation
+        if (inMultiLine) {
+            size_t closePos = line.find("}}");
+            if (closePos != std::string::npos) {
+                // Found closer - append content before }}
+                multiLineBuffer += line.substr(0, closePos);
+                inMultiLine = false;
+                
+                std::string content = multiLineBuffer;
+                std::string directive = currentMultiLineDirective;
+                
+                // Process the completed content
+                if (directive == "goal ") {
+                    if (!content.empty()) {
+                        if (!currentBlockGoal.empty()) {
+                            std::cout << "[GemStack] Warning: Multiple goals in block " << promptBlockCount
+                                      << ". Overwriting previous goal." << std::endl;
+                        }
+                        currentBlockGoal = content;
+                        std::cout << "[GemStack] Goal set (multi-line)" << std::endl;
+                    }
+                } else if (directive == "specify ") {
+                    if (!content.empty()) {
+                        pendingSpecifications.push_back(content);
+                        std::cout << "[GemStack] Specification queued (multi-line)" << std::endl;
+                    }
+                } else if (directive == "prompt ") {
+                    if (!content.empty()) {
+                        std::string finalCommand;
+                        std::string augmentedPrompt;
+
+                        bool hasGoal = !currentBlockGoal.empty();
+                        bool hasSpecs = !pendingSpecifications.empty();
+
+                        if (hasGoal || hasSpecs) {
+                            if (hasGoal) {
+                                augmentedPrompt += "GOAL - The ultimate objective you are working towards:\n";
+                                augmentedPrompt += "  " + currentBlockGoal + "\n\n";
+                            }
+                            if (hasSpecs) {
+                                augmentedPrompt += "CHECKPOINT - Before proceeding, verify the following expectations are met. If any are NOT correct, fix them first and explain what was missing:\n";
+                                for (size_t i = 0; i < pendingSpecifications.size(); i++) {
+                                    augmentedPrompt += "  " + std::to_string(i + 1) + ". " + pendingSpecifications[i] + "\n";
+                                }
+                                augmentedPrompt += "\n";
+                                pendingSpecifications.clear();
+                            }
+                            if (hasGoal && !hasSpecs) {
+                                augmentedPrompt += "CURRENT TASK:\n" + content;
+                            } else {
+                                augmentedPrompt += "After verification is complete, proceed with the following task:\n" + content;
+                            }
+                            
+                            finalCommand = "prompt \"" + augmentedPrompt + "\"";
+                            
+                             if (hasGoal && hasSpecs) {
+                                std::cout << "[GemStack] Prompt with goal and " << pendingSpecifications.size()
+                                          << " checkpoint(s) queued" << std::endl;
+                            } else if (hasGoal) {
+                                std::cout << "[GemStack] Prompt with goal queued" << std::endl;
+                            } else {
+                                std::cout << "[GemStack] Prompt with " << pendingSpecifications.size()
+                                          << " verification checkpoint(s) queued" << std::endl;
+                            }
+                        } else {
+                            finalCommand = "prompt \"" + content + "\"";
+                            std::cout << "[GemStack] Prompt queued (multi-line)" << std::endl;
+                        }
+
+                        {
+                            std::lock_guard<std::mutex> lock(queueMutex);
+                            commandQueue.push(finalCommand);
+                            commandsLoaded = true;
+                        }
+                    }
+                }
+                
+                continue;
+            } else {
+                multiLineBuffer += line + "\n";
+                continue;
+            }
+        }
 
         // Check for GemStack delimiters
         if (trimmedLine.find("GemStackSTART") != std::string::npos) {
@@ -263,6 +361,28 @@ bool loadCommandsFromFile(const std::string& filename) {
             continue;
         }
 
+        // Check for start of multi-line directive {{ 
+        std::string potentialDirective;
+        if (startsWithDirective(trimmedLine, "prompt ")) potentialDirective = "prompt ";
+        else if (startsWithDirective(trimmedLine, "goal ")) potentialDirective = "goal ";
+        else if (startsWithDirective(trimmedLine, "specify ")) potentialDirective = "specify ";
+        
+        if (!potentialDirective.empty()) {
+            size_t braceStart = trimmedLine.find("{{");
+            // Ensure brace is after the directive
+            if (braceStart != std::string::npos) {
+                 size_t braceEnd = trimmedLine.find("}}", braceStart);
+                 if (braceEnd == std::string::npos) {
+                     // Start of multi-line block
+                     inMultiLine = true;
+                     currentMultiLineDirective = potentialDirective;
+                     multiLineBuffer = trimmedLine.substr(braceStart + 2) + "\n";
+                     continue;
+                 }
+                 // If braceEnd is found, it's a single line {{...}} handled by extractDirectiveContent
+            }
+        }
+
         // Handle 'goal' directive - sets high-level objective for the block
         if (startsWithDirective(trimmedLine, "goal ")) {
             std::string goalContent = extractDirectiveContent(trimmedLine, "goal ");
@@ -272,7 +392,7 @@ bool loadCommandsFromFile(const std::string& filename) {
                               << ". Overwriting previous goal." << std::endl;
                 }
                 currentBlockGoal = goalContent;
-                std::cout << "[GemStack] Goal set: \""
+                std::cout << "[GemStack] Goal set: \"" 
                           << (goalContent.length() > 60 ? goalContent.substr(0, 60) + "..." : goalContent)
                           << "\"" << std::endl;
             }
@@ -284,7 +404,7 @@ bool loadCommandsFromFile(const std::string& filename) {
             std::string specContent = extractDirectiveContent(trimmedLine, "specify ");
             if (!specContent.empty()) {
                 pendingSpecifications.push_back(specContent);
-                std::cout << "[GemStack] Specification queued: \""
+                std::cout << "[GemStack] Specification queued: \"" 
                           << (specContent.length() > 50 ? specContent.substr(0, 50) + "..." : specContent)
                           << "\"" << std::endl;
             }
