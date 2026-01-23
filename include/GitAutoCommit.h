@@ -34,6 +34,9 @@ public:
     // Check if current directory is inside a git repository
     static bool isGitRepository();
 
+    // Initialize a new git repository in the current directory
+    static bool initializeRepository();
+
     // Check if there are uncommitted changes (staged, unstaged, or untracked)
     static bool hasUncommittedChanges();
 

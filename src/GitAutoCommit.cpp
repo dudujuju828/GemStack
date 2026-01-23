@@ -48,6 +48,15 @@ bool GitAutoCommit::isGitRepository() {
     return result == 0;
 }
 
+bool GitAutoCommit::initializeRepository() {
+#ifdef _WIN32
+    int result = system("git init >nul 2>&1");
+#else
+    int result = system("git init >/dev/null 2>&1");
+#endif
+    return result == 0;
+}
+
 bool GitAutoCommit::hasUncommittedChanges() {
     // Check for any changes using git status --porcelain
 #ifdef _WIN32
@@ -210,8 +219,11 @@ bool GitAutoCommit::maybeCommit(const std::string& promptSummary) {
 
     // Check if we're in a git repository
     if (!isGitRepository()) {
-        std::cout << "[GemStack] Auto-commit skipped: not a git repository" << std::endl;
-        return false;
+        std::cout << "[GemStack] Repository not initialized. Initializing git repository..." << std::endl;
+        if (!initializeRepository()) {
+            std::cerr << "[GemStack] Auto-commit failed: could not initialize git repository" << std::endl;
+            return false;
+        }
     }
 
     // Check if there are changes to commit

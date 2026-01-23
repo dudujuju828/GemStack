@@ -131,35 +131,69 @@ static std::string extractPromptSummary(const std::string& prompt) {
 std::pair<bool, std::string> executeSinglePrompt(const std::string& prompt, bool injectSessionContext = true) {
     bool success = false;
     std::string finalOutput;
+    std::string promptSummary = extractPromptSummary(prompt);
 
-    // Build the prompt with session context if requested
-    std::string promptWithContext = prompt;
-    if (injectSessionContext) {
-        std::string sessionContext = buildSessionContext();
-        if (!sessionContext.empty()) {
-            // Extract prompt content and inject session context at the beginning
-            if (prompt.find("prompt \"") == 0) {
-                std::string promptContent = prompt.substr(8);
-                if (!promptContent.empty() && promptContent.back() == '"') {
-                    promptContent.pop_back();
-                }
-                promptWithContext = "prompt \"" + sessionContext + promptContent + "\"";
-            }
+    // Check if this is a "prompt" command that we can pass via file to avoid shell injection
+    bool isPromptCommand = (prompt.find("prompt \"") == 0);
+    std::string tempInputFile = "GemStackInput.tmp";
+    bool useFile = false;
+    std::string fullCommand;
+    std::string cliPath = CliManager::getGeminiCliPath();
+    std::string model; // Will be set in the loop
+
+    if (isPromptCommand) {
+        useFile = true;
+        std::string contentToWrite;
+
+        // Extract raw content from prompt command
+        std::string promptContent = prompt.substr(8);
+        if (!promptContent.empty() && promptContent.back() == '"') {
+            promptContent.pop_back();
+        }
+
+        // Build full content with session context
+        if (injectSessionContext) {
+            std::string sessionContext = buildSessionContext();
+            contentToWrite = sessionContext + promptContent;
+        } else {
+            contentToWrite = promptContent;
+        }
+
+        // Write to temp file
+        std::ofstream outFile(tempInputFile, std::ios::trunc); // Overwrite if exists
+        if (outFile.is_open()) {
+            outFile << contentToWrite;
+            outFile.close();
+        } else {
+            std::cerr << "[GemStack] Error: Could not create temp input file. Falling back to unsafe method." << std::endl;
+            useFile = false;
         }
     }
 
-    // Sanitize the prompt to prevent command injection
-    std::string safePrompt = escapeForShell(promptWithContext);
-
-    // Extract summary from original prompt (without session context) for logging
-    std::string promptSummary = extractPromptSummary(prompt);
-
     while (!success) {
-        std::string model = getCurrentModel();
+        model = getCurrentModel();
         std::cout << "[GemStack] Processing with model " << model << std::endl;
 
-        std::string cliPath = CliManager::getGeminiCliPath();
-        std::string fullCommand = "node \"" + cliPath + "\" --yolo --model " + model + " " + safePrompt;
+        if (useFile) {
+            // Use redirection from temp file
+            // Note: "prompt" subcommand is required
+            fullCommand = "node \"" + cliPath + "\" --yolo --model " + model + " prompt < " + tempInputFile;
+        } else {
+            // Legacy/Fallback method (unsafe for flags in content, but necessary for non-prompt commands like --version)
+            
+            // Build the prompt with session context if requested (and feasible)
+            std::string promptWithContext = prompt;
+            if (injectSessionContext && !isPromptCommand) { 
+                // Only try to inject if it looks like a prompt but failed isPromptCommand check?
+                // Actually, if it's not "prompt \"...\"", we probably can't inject context easily 
+                // without breaking the command structure (e.g. it might be "--help").
+                // So we skip injection for non-standard prompts.
+            }
+
+            // Sanitize
+            std::string safePrompt = escapeForShell(promptWithContext);
+            fullCommand = "node \"" + cliPath + "\" --yolo --model " + model + " " + safePrompt;
+        }
 
         // Execute in current directory
         auto [result, output] = ProcessExecutor::execute(fullCommand, ".");
@@ -187,6 +221,15 @@ std::pair<bool, std::string> executeSinglePrompt(const std::string& prompt, bool
             // Log failure to session log
             appendToSessionLog(promptSummary, false, "Exit code: " + std::to_string(result));
             break;
+        }
+    }
+
+    // Cleanup temp file
+    if (useFile) {
+        std::error_code ec;
+        fs::remove(tempInputFile, ec);
+        if (ec) {
+            // Non-critical error, just log debug if needed
         }
     }
 
