@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <cstdlib>
 #include <array>
+#include <chrono>
+#include <ctime>
 
 std::queue<std::string> commandQueue;
 std::mutex queueMutex;
@@ -224,13 +226,16 @@ bool loadCommandsFromFile(const std::string& filename) {
     // Accumulated specify statements to prepend to the next prompt
     std::vector<std::string> pendingSpecifications;
 
+    // Accumulated style guides to prepend to prompts in the block
+    std::vector<std::string> pendingStyles;
+
     // Current block's goal (high-level description of final product)
     std::string currentBlockGoal;
 
     // Multi-line parsing state
     bool inMultiLine = false;
     std::string multiLineBuffer;
-    std::string currentMultiLineDirective; // "prompt ", "specify ", "goal "
+    std::string currentMultiLineDirective; // "prompt ", "specify ", "goal ", "style "
 
     while (std::getline(file, line)) {
         std::string trimmedLine = trim(line);
@@ -261,6 +266,11 @@ bool loadCommandsFromFile(const std::string& filename) {
                         pendingSpecifications.push_back(content);
                         std::cout << "[GemStack] Specification queued (multi-line)" << std::endl;
                     }
+                } else if (directive == "style ") {
+                    if (!content.empty()) {
+                        pendingStyles.push_back(content);
+                        std::cout << "[GemStack] Style guide queued (multi-line)" << std::endl;
+                    }
                 } else if (directive == "prompt ") {
                     if (!content.empty()) {
                         std::string finalCommand;
@@ -268,11 +278,20 @@ bool loadCommandsFromFile(const std::string& filename) {
 
                         bool hasGoal = !currentBlockGoal.empty();
                         bool hasSpecs = !pendingSpecifications.empty();
+                        bool hasStyles = !pendingStyles.empty();
 
-                        if (hasGoal || hasSpecs) {
+                        if (hasGoal || hasSpecs || hasStyles) {
                             if (hasGoal) {
                                 augmentedPrompt += "GOAL - The ultimate objective you are working towards:\n";
                                 augmentedPrompt += "  " + currentBlockGoal + "\n\n";
+                            }
+                            if (hasStyles) {
+                                augmentedPrompt += "STYLE GUIDE - Follow these coding conventions and style guidelines:\n";
+                                for (size_t i = 0; i < pendingStyles.size(); i++) {
+                                    augmentedPrompt += "  " + std::to_string(i + 1) + ". " + pendingStyles[i] + "\n";
+                                }
+                                augmentedPrompt += "\n";
+                                // Note: styles persist throughout the block, not cleared here
                             }
                             if (hasSpecs) {
                                 augmentedPrompt += "CHECKPOINT - Before proceeding, verify the following expectations are met. If any are NOT correct, fix them first and explain what was missing:\n";
@@ -284,21 +303,19 @@ bool loadCommandsFromFile(const std::string& filename) {
                             }
                             if (hasGoal && !hasSpecs) {
                                 augmentedPrompt += "CURRENT TASK:\n" + content;
-                            } else {
+                            } else if (hasSpecs) {
                                 augmentedPrompt += "After verification is complete, proceed with the following task:\n" + content;
-                            }
-                            
-                            finalCommand = "prompt \"" + augmentedPrompt + "\"";
-                            
-                             if (hasGoal && hasSpecs) {
-                                std::cout << "[GemStack] Prompt with goal and " << pendingSpecifications.size()
-                                          << " checkpoint(s) queued" << std::endl;
-                            } else if (hasGoal) {
-                                std::cout << "[GemStack] Prompt with goal queued" << std::endl;
                             } else {
-                                std::cout << "[GemStack] Prompt with " << pendingSpecifications.size()
-                                          << " verification checkpoint(s) queued" << std::endl;
+                                augmentedPrompt += "CURRENT TASK:\n" + content;
                             }
+
+                            finalCommand = "prompt \"" + augmentedPrompt + "\"";
+
+                            std::cout << "[GemStack] Prompt queued (multi-line)";
+                            if (hasGoal) std::cout << " [goal]";
+                            if (hasStyles) std::cout << " [" << pendingStyles.size() << " style(s)]";
+                            if (hasSpecs) std::cout << " [checkpoint]";
+                            std::cout << std::endl;
                         } else {
                             finalCommand = "prompt \"" + content + "\"";
                             std::cout << "[GemStack] Prompt queued (multi-line)" << std::endl;
@@ -339,6 +356,7 @@ bool loadCommandsFromFile(const std::string& filename) {
             inPromptBlock = true;
             promptBlockCount++;
             pendingSpecifications.clear(); // Clear specs at block start
+            pendingStyles.clear();         // Clear styles at block start
             currentBlockGoal.clear();      // Clear goal at block start
             std::cout << "[GemStack] Entering PromptBlock " << promptBlockCount << std::endl;
             continue;
@@ -352,6 +370,7 @@ bool loadCommandsFromFile(const std::string& filename) {
                 pendingSpecifications.clear();
             }
             currentBlockGoal.clear(); // Clear goal when exiting block
+            pendingStyles.clear();    // Clear styles when exiting block
             std::cout << "[GemStack] Exiting PromptBlock " << promptBlockCount << std::endl;
             continue;
         }
@@ -361,11 +380,12 @@ bool loadCommandsFromFile(const std::string& filename) {
             continue;
         }
 
-        // Check for start of multi-line directive {{ 
+        // Check for start of multi-line directive {{
         std::string potentialDirective;
         if (startsWithDirective(trimmedLine, "prompt ")) potentialDirective = "prompt ";
         else if (startsWithDirective(trimmedLine, "goal ")) potentialDirective = "goal ";
         else if (startsWithDirective(trimmedLine, "specify ")) potentialDirective = "specify ";
+        else if (startsWithDirective(trimmedLine, "style ")) potentialDirective = "style ";
         
         if (!potentialDirective.empty()) {
             size_t braceStart = trimmedLine.find("{{");
@@ -404,14 +424,26 @@ bool loadCommandsFromFile(const std::string& filename) {
             std::string specContent = extractDirectiveContent(trimmedLine, "specify ");
             if (!specContent.empty()) {
                 pendingSpecifications.push_back(specContent);
-                std::cout << "[GemStack] Specification queued: \"" 
+                std::cout << "[GemStack] Specification queued: \""
                           << (specContent.length() > 50 ? specContent.substr(0, 50) + "..." : specContent)
                           << "\"" << std::endl;
             }
             continue;
         }
 
-        // Handle 'prompt' directive - may have goal and specifications prepended
+        // Handle 'style' directive - accumulate style guides for the block
+        if (startsWithDirective(trimmedLine, "style ")) {
+            std::string styleContent = extractDirectiveContent(trimmedLine, "style ");
+            if (!styleContent.empty()) {
+                pendingStyles.push_back(styleContent);
+                std::cout << "[GemStack] Style guide queued: \""
+                          << (styleContent.length() > 50 ? styleContent.substr(0, 50) + "..." : styleContent)
+                          << "\"" << std::endl;
+            }
+            continue;
+        }
+
+        // Handle 'prompt' directive - may have goal, styles, and specifications prepended
         if (startsWithDirective(trimmedLine, "prompt ")) {
             std::string promptContent = extractDirectiveContent(trimmedLine, "prompt ");
 
@@ -419,15 +451,26 @@ bool loadCommandsFromFile(const std::string& filename) {
                 std::string finalCommand;
                 std::string augmentedPrompt;
 
-                // Build the augmented prompt with goal and/or specifications
+                // Build the augmented prompt with goal, styles, and/or specifications
                 bool hasGoal = !currentBlockGoal.empty();
                 bool hasSpecs = !pendingSpecifications.empty();
+                bool hasStyles = !pendingStyles.empty();
 
-                if (hasGoal || hasSpecs) {
+                if (hasGoal || hasSpecs || hasStyles) {
                     // Add goal context if present
                     if (hasGoal) {
                         augmentedPrompt += "GOAL - The ultimate objective you are working towards:\n";
                         augmentedPrompt += "  " + currentBlockGoal + "\n\n";
+                    }
+
+                    // Add style guides if present
+                    if (hasStyles) {
+                        augmentedPrompt += "STYLE GUIDE - Follow these coding conventions and style guidelines:\n";
+                        for (size_t i = 0; i < pendingStyles.size(); i++) {
+                            augmentedPrompt += "  " + std::to_string(i + 1) + ". " + pendingStyles[i] + "\n";
+                        }
+                        augmentedPrompt += "\n";
+                        // Note: styles persist throughout the block, not cleared here
                     }
 
                     // Add verification checkpoints if present
@@ -441,23 +484,19 @@ bool loadCommandsFromFile(const std::string& filename) {
                     }
 
                     // Add the actual task
-                    if (hasGoal && !hasSpecs) {
-                        augmentedPrompt += "CURRENT TASK:\n" + promptContent;
-                    } else {
+                    if (hasSpecs) {
                         augmentedPrompt += "After verification is complete, proceed with the following task:\n" + promptContent;
+                    } else {
+                        augmentedPrompt += "CURRENT TASK:\n" + promptContent;
                     }
 
                     finalCommand = "prompt \"" + augmentedPrompt + "\"";
 
-                    if (hasGoal && hasSpecs) {
-                        std::cout << "[GemStack] Prompt with goal and " << pendingSpecifications.size()
-                                  << " checkpoint(s) queued" << std::endl;
-                    } else if (hasGoal) {
-                        std::cout << "[GemStack] Prompt with goal queued" << std::endl;
-                    } else {
-                        std::cout << "[GemStack] Prompt with " << pendingSpecifications.size()
-                                  << " verification checkpoint(s) queued" << std::endl;
-                    }
+                    std::cout << "[GemStack] Prompt queued";
+                    if (hasGoal) std::cout << " [goal]";
+                    if (hasStyles) std::cout << " [" << pendingStyles.size() << " style(s)]";
+                    if (hasSpecs) std::cout << " [checkpoint]";
+                    std::cout << std::endl;
                 } else {
                     finalCommand = trimmedLine; // Use original prompt line
                     std::cout << "[GemStack] Prompt queued from " << filename << std::endl;
@@ -564,4 +603,84 @@ std::string extractFirstMeaningfulLine(const std::string& output, size_t maxLeng
     }
 
     return result;
+}
+
+// Session log management functions
+
+std::string getSessionLogPath() {
+    return SESSION_LOG_FILENAME;
+}
+
+std::string readSessionLog() {
+    std::ifstream file(SESSION_LOG_FILENAME);
+    if (!file.is_open()) {
+        return "";
+    }
+
+    std::stringstream buffer;
+    buffer << file.rdbuf();
+    return buffer.str();
+}
+
+void appendToSessionLog(const std::string& promptSummary, bool success, const std::string& notes) {
+    // Open in append mode
+    std::ofstream file(SESSION_LOG_FILENAME, std::ios::app);
+    if (!file.is_open()) {
+        std::cerr << "[GemStack] Warning: Could not write to session log file." << std::endl;
+        return;
+    }
+
+    // Get current timestamp
+    auto now = std::chrono::system_clock::now();
+    auto time = std::chrono::system_clock::to_time_t(now);
+    std::tm tm_buf;
+#ifdef _WIN32
+    localtime_s(&tm_buf, &time);
+#else
+    localtime_r(&time, &tm_buf);
+#endif
+    char timeStr[64];
+    std::strftime(timeStr, sizeof(timeStr), "%Y-%m-%d %H:%M:%S", &tm_buf);
+
+    // Write entry
+    file << "[" << timeStr << "] ";
+    file << (success ? "[SUCCESS] " : "[FAILED] ");
+    file << promptSummary;
+    if (!notes.empty()) {
+        file << " | Notes: " << notes;
+    }
+    file << "\n";
+
+    file.close();
+}
+
+void clearSessionLog() {
+    // Open in truncate mode to clear the file
+    std::ofstream file(SESSION_LOG_FILENAME, std::ios::trunc);
+    if (file.is_open()) {
+        file.close();
+        std::cout << "[GemStack] Session log cleared." << std::endl;
+    }
+}
+
+std::string buildSessionContext() {
+    std::string sessionLog = readSessionLog();
+    std::string context;
+
+    // Always include the session log instruction, even if empty
+    context += "SESSION LOG - You can write critical details, decisions, and notes to '" + SESSION_LOG_FILENAME + "' by appending to it. ";
+    context += "This file persists across prompts and helps you remember what you have done.\n";
+
+    if (!sessionLog.empty()) {
+        context += "\nPREVIOUS SESSION HISTORY (from " + SESSION_LOG_FILENAME + "):\n";
+        context += "---\n";
+        context += sessionLog;
+        context += "---\n";
+        context += "Review this history to understand what has been completed. Do not repeat completed work.\n";
+    } else {
+        context += "The session log is currently empty - this is the first prompt of the session.\n";
+    }
+
+    context += "\n";
+    return context;
 }

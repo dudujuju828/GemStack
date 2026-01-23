@@ -62,4 +62,12 @@ std::string joinPath(const std::string& base, const std::string& relative);
 // Output parsing utilities
 std::string extractFirstMeaningfulLine(const std::string& output, size_t maxLength = 200);
 
+// Session log management
+const std::string SESSION_LOG_FILENAME = "GemStackSessionLog.txt";
+std::string getSessionLogPath();
+std::string readSessionLog();
+void appendToSessionLog(const std::string& promptSummary, bool success, const std::string& notes = "");
+void clearSessionLog();
+std::string buildSessionContext();
+
 #endif // GEMSTACK_CORE_H

@@ -128,12 +128,31 @@ static std::string extractPromptSummary(const std::string& prompt) {
 }
 
 // Execute a single prompt and return the result
-std::pair<bool, std::string> executeSinglePrompt(const std::string& prompt) {
+std::pair<bool, std::string> executeSinglePrompt(const std::string& prompt, bool injectSessionContext = true) {
     bool success = false;
     std::string finalOutput;
 
+    // Build the prompt with session context if requested
+    std::string promptWithContext = prompt;
+    if (injectSessionContext) {
+        std::string sessionContext = buildSessionContext();
+        if (!sessionContext.empty()) {
+            // Extract prompt content and inject session context at the beginning
+            if (prompt.find("prompt \"") == 0) {
+                std::string promptContent = prompt.substr(8);
+                if (!promptContent.empty() && promptContent.back() == '"') {
+                    promptContent.pop_back();
+                }
+                promptWithContext = "prompt \"" + sessionContext + promptContent + "\"";
+            }
+        }
+    }
+
     // Sanitize the prompt to prevent command injection
-    std::string safePrompt = escapeForShell(prompt);
+    std::string safePrompt = escapeForShell(promptWithContext);
+
+    // Extract summary from original prompt (without session context) for logging
+    std::string promptSummary = extractPromptSummary(prompt);
 
     while (!success) {
         std::string model = getCurrentModel();
@@ -150,17 +169,23 @@ std::pair<bool, std::string> executeSinglePrompt(const std::string& prompt) {
             std::cout << "[GemStack] Command finished successfully." << std::endl;
             success = true;
 
+            // Append to session log
+            appendToSessionLog(promptSummary, true);
+
             // Perform auto-commit if enabled (uses GitAutoCommit module)
-            std::string promptSummary = extractPromptSummary(prompt);
             g_autoCommit.maybeCommit(promptSummary);
         } else if (isModelExhausted(output)) {
             if (!downgradeModel()) {
                 std::cerr << "[GemStack] Command failed: all models exhausted." << std::endl;
+                // Log failure to session log
+                appendToSessionLog(promptSummary, false, "All models exhausted");
                 break;
             }
             std::cout << "[GemStack] Retrying command with downgraded model..." << std::endl;
         } else {
             std::cerr << "[GemStack] Command failed with code: " << result << std::endl;
+            // Log failure to session log
+            appendToSessionLog(promptSummary, false, "Exit code: " + std::to_string(result));
             break;
         }
     }
@@ -266,7 +291,8 @@ void runReflectiveMode(const std::string& initialPrompt, int maxIterations, Cons
 
             std::string reflectionQuery = "prompt \"" + historyContext + "\"";
 
-            auto [reflectSuccess, nextPrompt] = executeSinglePrompt(reflectionQuery);
+            // Don't inject session context for the reflection meta-query
+            auto [reflectSuccess, nextPrompt] = executeSinglePrompt(reflectionQuery, false);
 
             ui.stopAnimation();
 

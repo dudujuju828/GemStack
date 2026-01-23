@@ -13,7 +13,9 @@ The application allows users to define a series of commands in a file for batch 
 - **Interactive Mode**: Append commands to the processing queue during runtime.
 - **Reflective Mode**: AI continuously improves its work by generating its own follow-up prompts.
 - **Prompt Blocks**: Organize related prompts into logical blocks with `PromptBlockSTART`/`PromptBlockEND`.
+- **Style Guides**: Use `style` to define coding conventions that apply to all prompts in a block (optional).
 - **Specification Checkpoints**: Use `specify` to define expectations that are verified before each prompt executes.
+- **Session Log (AI Memory)**: Persistent log that tracks completed prompts and allows the AI to record notes for future reference.
 - **Gemini CLI Integration**: utilizes the underlying Node.js-based Gemini CLI for all AI interactions.
 - **Auto-Approval**: Runs in YOLO mode by default for uninterrupted automation.
 - **Automatic Model Fallback**: Automatically downgrades to a less capable model when rate limits are hit.
@@ -109,13 +111,17 @@ GemStackEND
 
 ---
 
-### Prompt Blocks and the `specify` Directive
+### Prompt Blocks, Style Guides, and the `specify` Directive
 
-GemStack supports **Prompt Blocks** and **Specification Checkpoints** for more structured, reliable automation workflows.
+GemStack supports **Prompt Blocks**, **Style Guides**, and **Specification Checkpoints** for more structured, reliable automation workflows.
 
 #### Overview
 
-When building complex projects with multiple sequential prompts, it's important to verify that each step completed correctly before proceeding. The `specify` directive allows you to define **expectations** that must be verified before the next prompt executes.
+When building complex projects with multiple sequential prompts, it's important to:
+- Maintain consistent coding conventions across all generated code
+- Verify that each step completed correctly before proceeding
+
+The `style` directive allows you to define **coding conventions and style guidelines** that the AI follows throughout the block. The `specify` directive allows you to define **expectations** that must be verified before the next prompt executes.
 
 #### Syntax
 
@@ -124,29 +130,36 @@ When building complex projects with multiple sequential prompts, it's important 
 | `PromptBlockSTART` | Marks the beginning of a prompt block |
 | `PromptBlockEND` | Marks the end of a prompt block |
 | `goal "..."` | High-level objective for the block (one per block) |
+| `style "..."` | Coding conventions to follow throughout the block (optional, can have multiple) |
 | `specify "..."` | Defines an expectation to verify before the next prompt |
 | `prompt "..."` | A task for the AI to execute |
 
 #### How It Works
 
-1. **Prompt Blocks**: Group related prompts together using `PromptBlockSTART` and `PromptBlockEND`. This provides logical organization and resets specification state between blocks.
+1. **Prompt Blocks**: Group related prompts together using `PromptBlockSTART` and `PromptBlockEND`. This provides logical organization and resets all state (goal, styles, specifications) between blocks.
 
 2. **Goals**: Each prompt block can have one `goal "..."` statement that describes the high-level objective or final product for that block. The goal is prepended to **every** prompt in the block, giving the AI consistent context about what it's ultimately working towards.
 
-3. **Specifications**: When you add `specify "..."` statements between prompts, they accumulate and are automatically prepended to the **next** prompt as verification checkpoints.
+3. **Style Guides**: When you add `style "..."` statements in a block, they are prepended to **every** prompt in that block. Unlike specifications, styles persist throughout the entire block—they're not cleared after each prompt. This ensures consistent coding conventions across all prompts.
 
-4. **Verification Checkpoints**: When a prompt has pending specifications, GemStack transforms it into a verification-first task:
+4. **Specifications**: When you add `specify "..."` statements between prompts, they accumulate and are automatically prepended to the **next** prompt as verification checkpoints. Specifications are cleared after each prompt.
+
+5. **Verification Checkpoints**: When a prompt has pending specifications, GemStack transforms it into a verification-first task:
    - The AI first checks if all specified expectations are met
    - If any expectation is NOT met, the AI fixes the issues first
    - Only after verification does the AI proceed with the actual task
 
-#### Example with Goal and Specifications
+#### Example with Goal, Styles, and Specifications
 
 ```text
 GemStackSTART
 
 PromptBlockSTART
 goal "A modern React website with responsive Header and Footer components using TypeScript and CSS modules"
+
+style "Use functional components with TypeScript interfaces for props"
+style "Follow BEM naming convention for CSS classes"
+style "Use 2-space indentation and single quotes for strings"
 
 prompt "Initialize a new React project with TypeScript called 'my-app'"
 
@@ -166,21 +179,31 @@ GemStackEND
 
 #### What Happens Internally
 
-When the above queue is processed, the **first** prompt (which has a goal but no specifications) is transformed into:
+When the above queue is processed, the **first** prompt (which has goal and styles but no specifications) is transformed into:
 
 ```
 GOAL - The ultimate objective you are working towards:
   A modern React website with responsive Header and Footer components using TypeScript and CSS modules
+
+STYLE GUIDE - Follow these coding conventions and style guidelines:
+  1. Use functional components with TypeScript interfaces for props
+  2. Follow BEM naming convention for CSS classes
+  3. Use 2-space indentation and single quotes for strings
 
 CURRENT TASK:
 Initialize a new React project with TypeScript called 'my-app'
 ```
 
-The **second** prompt receives both the goal and a verification checkpoint:
+The **second** prompt receives the goal, styles, and a verification checkpoint:
 
 ```
 GOAL - The ultimate objective you are working towards:
   A modern React website with responsive Header and Footer components using TypeScript and CSS modules
+
+STYLE GUIDE - Follow these coding conventions and style guidelines:
+  1. Use functional components with TypeScript interfaces for props
+  2. Follow BEM naming convention for CSS classes
+  3. Use 2-space indentation and single quotes for strings
 
 CHECKPOINT - Before proceeding, verify the following expectations are met.
 If any are NOT correct, fix them first and explain what was missing:
@@ -190,11 +213,16 @@ After verification is complete, proceed with the following task:
 Create a Header component with a navigation menu
 ```
 
-The **third** prompt receives the goal plus two verification checkpoints:
+The **third** prompt receives the goal, styles, and two verification checkpoints:
 
 ```
 GOAL - The ultimate objective you are working towards:
   A modern React website with responsive Header and Footer components using TypeScript and CSS modules
+
+STYLE GUIDE - Follow these coding conventions and style guidelines:
+  1. Use functional components with TypeScript interfaces for props
+  2. Follow BEM naming convention for CSS classes
+  3. Use 2-space indentation and single quotes for strings
 
 CHECKPOINT - Before proceeding, verify the following expectations are met.
 If any are NOT correct, fix them first and explain what was missing:
@@ -204,6 +232,8 @@ If any are NOT correct, fix them first and explain what was missing:
 After verification is complete, proceed with the following task:
 Add responsive styling using CSS modules
 ```
+
+Note how the **style guides persist** across all prompts in the block, ensuring consistent conventions.
 
 #### Multiple Prompt Blocks
 
@@ -248,6 +278,30 @@ GemStackEND
 
 3. **One Goal Per Block**: If you need different goals, use separate prompt blocks
 
+#### Best Practices for `style`
+
+1. **Define Early**: Place style directives at the beginning of a block, before any prompts
+   - Styles apply to all prompts in the block, so define them upfront
+
+2. **Be Specific About Conventions**: Clearly state coding standards
+   - Good: `style "Use camelCase for variables and PascalCase for components"`
+   - Good: `style "All functions must have JSDoc comments with @param and @returns"`
+   - Vague: `style "Write good code"`
+
+3. **Cover Multiple Aspects**: Use separate style directives for different concerns
+   - `style "Use TypeScript strict mode with explicit return types"`
+   - `style "Follow Airbnb ESLint rules for formatting"`
+   - `style "Use CSS modules with BEM naming convention"`
+
+4. **Language-Specific Guidelines**: Tailor styles to your tech stack
+   - React: `style "Use functional components with hooks, no class components"`
+   - Python: `style "Follow PEP 8, use type hints, docstrings in Google format"`
+   - Go: `style "Use standard library conventions, error wrapping with fmt.Errorf"`
+
+5. **Optional Usage**: Style guides are completely optional—use them when consistency matters
+   - Great for team projects with established conventions
+   - Useful when generating multiple related components
+
 #### Best Practices for `specify`
 
 1. **Be Specific**: Write clear, verifiable expectations
@@ -270,9 +324,10 @@ GemStackEND
 
 - **Multiple Goals**: If you define more than one `goal` in a block, GemStack will warn you and use the last one
 - **Unused Specifications**: If `specify` statements appear at the end of a block (with no following prompt), GemStack will warn you
-- **Block Boundaries**: Goals and specifications don't carry across `PromptBlockEND` boundaries—they reset at each block start
+- **Block Boundaries**: Goals, styles, and specifications don't carry across `PromptBlockEND` boundaries—they all reset at each block start
 - **Backwards Compatibility**: If you don't use `PromptBlockSTART`/`PromptBlockEND`, prompts work exactly as before
-- **Goal Without Prompts**: A `goal` without any `prompt` in the block has no effect
+- **Goal/Style Without Prompts**: A `goal` or `style` without any `prompt` in the block has no effect
+- **Style Persistence**: Unlike `specify` (which clears after each prompt), `style` directives persist for all prompts in the block
 
 ---
 
@@ -295,21 +350,26 @@ SYNTAX RULES:
 - Wrap everything in GemStackSTART and GemStackEND
 - Use PromptBlockSTART/PromptBlockEND to group related phases
 - Use goal "..." once per block to describe the high-level objective
+- Use style "..." to define coding conventions (optional, can have multiple per block)
 - Use prompt "..." for tasks the AI should execute
 - Use specify "..." BETWEEN prompts to define checkpoints that verify the previous work before proceeding
 
 STRUCTURE:
 1. Each PromptBlock should have one goal describing the final product for that phase
-2. Each prompt should be a single, focused task
-3. After each prompt, add 1-3 specify statements describing what should exist/be true after that prompt completes
-4. The goal and specify statements will be prepended to each prompt as context and verification checkpoints
-5. Break the project into logical phases using PromptBlockSTART/PromptBlockEND
+2. Optionally add style directives at the start of the block for coding conventions
+3. Each prompt should be a single, focused task
+4. After each prompt, add 1-3 specify statements describing what should exist/be true after that prompt completes
+5. The goal, styles, and specify statements will be prepended to each prompt as context and verification checkpoints
+6. Break the project into logical phases using PromptBlockSTART/PromptBlockEND
 
 EXAMPLE OUTPUT FORMAT:
 GemStackSTART
 
 PromptBlockSTART
 goal "Description of what this phase should ultimately produce"
+style "Use TypeScript with strict mode enabled"
+style "Follow component naming convention: PascalCase for components, camelCase for functions"
+
 prompt "First task description"
 
 specify "Expected outcome 1 from first task"
@@ -322,6 +382,8 @@ PromptBlockEND
 
 PromptBlockSTART
 goal "Description of next phase's final product"
+style "Maintain consistent error handling patterns"
+
 prompt "Next phase task"
 
 specify "Verification for next phase"
@@ -332,6 +394,7 @@ GemStackEND
 
 GUIDELINES:
 - Be specific in prompts - include file names, technologies, and exact requirements
+- Use style directives to enforce coding conventions across all prompts in a block
 - Specify statements should be verifiable (file exists, function works, component renders)
 - Start with project setup/initialization
 - Progress logically: setup → core features → styling → testing → polish
@@ -593,3 +656,99 @@ Example transformation:
 - **Failed prompts**: No commit is created for failed prompt executions
 - **Reflective mode**: Each iteration in reflective mode creates its own commit
 - **CLI precedence**: `--auto-commit` and `--no-auto-commit` always override config file settings
+
+---
+
+### Session Log (AI Memory)
+
+GemStack maintains a **session log** (`GemStackSessionLog.txt`) that provides the AI with persistent memory across prompts. This enables the AI to know what it has already done and avoid repeating work.
+
+#### How It Works
+
+1. **Before each prompt**: GemStack reads the session log and prepends its contents to the prompt, giving the AI full context of all previous actions in the session.
+
+2. **After each prompt**: GemStack automatically appends an entry to the session log recording:
+   - Timestamp
+   - Success/failure status
+   - Summary of the prompt executed
+
+3. **AI can write to the log**: The AI is instructed that it can append critical details, decisions, and notes to `GemStackSessionLog.txt`. This allows the AI to record important information for future prompts to reference.
+
+#### What the AI Sees
+
+Each prompt is automatically augmented with session context:
+
+```
+SESSION LOG - You can write critical details, decisions, and notes to 'GemStackSessionLog.txt' by appending to it. This file persists across prompts and helps you remember what you have done.
+
+PREVIOUS SESSION HISTORY (from GemStackSessionLog.txt):
+---
+[2024-01-15 10:30:00] [SUCCESS] Initialize a new React project with TypeScript
+[2024-01-15 10:32:15] [SUCCESS] Create a Header component with navigation
+---
+Review this history to understand what has been completed. Do not repeat completed work.
+
+[Your actual prompt content here...]
+```
+
+#### Use Cases
+
+- **Long automation sessions**: The AI can track what it has built and what remains
+- **Error recovery**: If a prompt fails, the AI sees the failure recorded and can adjust
+- **Complex projects**: The AI can record architectural decisions, file locations, or important notes for later prompts
+- **Debugging**: Review `GemStackSessionLog.txt` to see exactly what happened during a session
+
+#### AI-Written Notes
+
+The AI can append its own notes to the session log during execution. For example, if the AI discovers something important, it might write:
+
+```
+[2024-01-15 10:35:00] [NOTE] Database schema uses UUID primary keys - remember for future queries
+[2024-01-15 10:35:00] [NOTE] API base URL configured in src/config/api.ts
+```
+
+This information will then be visible to the AI in subsequent prompts.
+
+#### Starting a Fresh Session
+
+The session log persists between GemStack runs. To start a fresh session:
+
+**Option 1: Delete the file**
+```powershell
+# Windows
+del GemStackSessionLog.txt
+
+# Linux/macOS
+rm GemStackSessionLog.txt
+```
+
+**Option 2: Clear the file contents**
+```powershell
+# Windows
+echo. > GemStackSessionLog.txt
+
+# Linux/macOS
+> GemStackSessionLog.txt
+```
+
+#### Session Log Format
+
+Each automatic entry follows this format:
+```
+[YYYY-MM-DD HH:MM:SS] [SUCCESS|FAILED] <prompt summary> | Notes: <optional notes>
+```
+
+Example session log:
+```
+[2024-01-15 10:30:00] [SUCCESS] Initialize a new React project with TypeScript
+[2024-01-15 10:32:15] [SUCCESS] Create a Header component with navigation
+[2024-01-15 10:35:00] [FAILED] Add unit tests for Header | Notes: Exit code: 1
+[2024-01-15 10:36:30] [SUCCESS] Fix Header component and add unit tests
+```
+
+#### Best Practices
+
+1. **Clear between projects**: Start each new project with a fresh session log
+2. **Review the log**: Check `GemStackSessionLog.txt` if you need to understand what happened
+3. **Leverage AI notes**: Instruct the AI in your prompts to record specific information if needed
+4. **Combine with auto-commit**: Use both features together for maximum traceability
