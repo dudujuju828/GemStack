@@ -7,6 +7,7 @@
 #include <array>
 #include <chrono>
 #include <ctime>
+#include <thread>
 
 std::queue<std::string> commandQueue;
 std::mutex queueMutex;
@@ -16,6 +17,11 @@ std::atomic<bool> isBusy{false};
 
 // Global config instance
 GemStackConfig g_config;
+
+// Cooldown management - injectable sleeper for testing
+static SleeperFunction g_cooldownSleeper = nullptr;
+static std::optional<bool> g_cliCooldownEnabled;
+static std::optional<int> g_cliCooldownSeconds;
 
 GemStackConfig getDefaultConfig() {
     return GemStackConfig();
@@ -61,11 +67,26 @@ bool loadConfig(const std::string& filename) {
             g_config.autoCommitMessagePrefix = value;
         } else if (key == "autoCommitIncludePrompt" || key == "auto_commit_include_prompt") {
             g_config.autoCommitIncludePrompt = (value == "true" || value == "1" || value == "yes");
+        } else if (key == "cooldownEnabled" || key == "cooldown_enabled") {
+            g_config.cooldownEnabled = (value == "true" || value == "1" || value == "yes");
+        } else if (key == "cooldownSeconds" || key == "cooldown_seconds") {
+            try {
+                int seconds = std::stoi(value);
+                // Fall back to default 60 if non-positive
+                g_config.cooldownSeconds = (seconds > 0) ? seconds : 60;
+            } catch (...) {
+                // Invalid value, keep default
+                g_config.cooldownSeconds = 60;
+            }
         }
     }
 
     if (g_config.autoCommitEnabled) {
         std::cout << "[GemStack] Auto-commit enabled with prefix: \"" << g_config.autoCommitMessagePrefix << "\"" << std::endl;
+    }
+
+    if (g_config.cooldownEnabled) {
+        std::cout << "[GemStack] Cooldown enabled: " << g_config.cooldownSeconds << " seconds between prompts" << std::endl;
     }
 
     return true;
@@ -683,4 +704,63 @@ std::string buildSessionContext() {
 
     context += "\n";
     return context;
+}
+
+// ============================================================================
+// Cooldown Management
+// ============================================================================
+
+void defaultSleeper(int seconds) {
+    std::this_thread::sleep_for(std::chrono::seconds(seconds));
+}
+
+void setCooldownSleeper(SleeperFunction sleeper) {
+    g_cooldownSleeper = sleeper;
+}
+
+void resetCooldownSleeper() {
+    g_cooldownSleeper = nullptr;
+}
+
+void applyCooldownCliOverrides(std::optional<bool> enabled, std::optional<int> seconds) {
+    g_cliCooldownEnabled = enabled;
+    if (seconds.has_value()) {
+        // Fall back to 60 if non-positive
+        g_cliCooldownSeconds = (seconds.value() > 0) ? seconds : 60;
+    } else {
+        g_cliCooldownSeconds = seconds;
+    }
+}
+
+bool isCooldownEnabled() {
+    // CLI override takes precedence
+    if (g_cliCooldownEnabled.has_value()) {
+        return g_cliCooldownEnabled.value();
+    }
+    return g_config.cooldownEnabled;
+}
+
+int getEffectiveCooldownSeconds() {
+    // CLI override takes precedence
+    if (g_cliCooldownSeconds.has_value()) {
+        return g_cliCooldownSeconds.value();
+    }
+    return g_config.cooldownSeconds;
+}
+
+bool performCooldown() {
+    if (!isCooldownEnabled()) {
+        return false;
+    }
+
+    int seconds = getEffectiveCooldownSeconds();
+    std::cout << "[GemStack] Cooldown: waiting " << seconds << " seconds..." << std::endl;
+
+    if (g_cooldownSleeper) {
+        g_cooldownSleeper(seconds);
+    } else {
+        defaultSleeper(seconds);
+    }
+
+    return true;
 }

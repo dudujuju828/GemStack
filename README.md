@@ -137,6 +137,9 @@ Each iteration asks: "What's the most impactful next step?" and executes the AI'
 | `--auto-commit` | Enable git auto-commit for this run |
 | `--no-auto-commit` | Disable git auto-commit for this run |
 | `--commit-prefix <text>` | Override commit message prefix |
+| `--cooldown` | Enable cooldown delay between prompts |
+| `--no-cooldown` | Disable cooldown delay between prompts |
+| `--cooldown-seconds <n>` | Set cooldown delay duration (default: 60) |
 | `--help` | Show help |
 
 ## Configuration
@@ -148,9 +151,41 @@ Optional `GemStackConfig.txt` in the executable directory:
 autoCommitEnabled=true
 autoCommitMessagePrefix=[GemStack]
 autoCommitIncludePrompt=true
+
+# Cooldown settings (reduces rate limiting / IP flagging)
+cooldownEnabled=true
+cooldownSeconds=60
 ```
 
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `autoCommitEnabled` | `false` | Enable git commits after each prompt |
+| `autoCommitMessagePrefix` | `[GemStack]` | Prefix for commit messages |
+| `autoCommitIncludePrompt` | `true` | Include prompt summary in commits |
+| `cooldownEnabled` | `false` | Enable delay between prompts |
+| `cooldownSeconds` | `60` | Seconds to wait between prompts |
+
 **Precedence:** CLI flags > Config file > Defaults
+
+**Note:** Alternative snake_case keys also work (e.g., `cooldown_enabled`, `cooldown_seconds`).
+
+### Cooldown
+
+Adds a configurable delay between prompts to reduce rate limiting and IP flagging when running large queue files or long reflective sessions.
+
+```bash
+# Enable via CLI with default 60 seconds
+.\GemStack.exe --cooldown
+
+# Custom delay duration
+.\GemStack.exe --cooldown --cooldown-seconds 30
+
+# Or via config
+cooldownEnabled=true
+cooldownSeconds=60
+```
+
+**Behavior:** Delay occurs after each prompt completes (including session log update and auto-commit) and before the next prompt starts. No delay after the final prompt.
 
 ### Auto-Commit
 
@@ -211,6 +246,7 @@ cd build && ctest --output-on-failure
 | `tests/test_multiline.cpp` | Multi-line string handling |
 | `tests/test_git_auto_commit.cpp` | Git auto-commit logic |
 | `tests/test_process_executor.cpp` | Process execution |
+| `tests/test_cooldown.cpp` | Cooldown delay logic |
 
 ## Repository Structure
 

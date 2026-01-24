@@ -313,6 +313,11 @@ void runReflectiveMode(const std::string& initialPrompt, int maxIterations, Cons
             break;
         }
 
+        // Perform cooldown if enabled and not the last iteration
+        if (iteration < maxIterations) {
+            performCooldown();
+        }
+
         // If not the last iteration, ask for the next prompt
         if (iteration < maxIterations) {
             std::cout << "\n[GemStack] Generating next reflection prompt..." << std::endl;
@@ -378,6 +383,7 @@ void runReflectiveMode(const std::string& initialPrompt, int maxIterations, Cons
 void worker(ConsoleUI& ui) {
     while (true) {
         std::string command;
+        bool moreCommandsPending = false;
         {
             std::unique_lock<std::mutex> lock(queueMutex);
             queueCV.wait(lock, [] { return !commandQueue.empty() || !running; });
@@ -388,6 +394,7 @@ void worker(ConsoleUI& ui) {
 
             command = commandQueue.front();
             commandQueue.pop();
+            moreCommandsPending = !commandQueue.empty();
             isBusy = true;
         }
 
@@ -398,6 +405,11 @@ void worker(ConsoleUI& ui) {
         ui.startAnimation();
         auto [success, output] = executeSinglePrompt(command);
         ui.stopAnimation();
+
+        // Perform cooldown if enabled and more commands are pending
+        if (moreCommandsPending) {
+            performCooldown();
+        }
 
         isBusy = false;
     }
@@ -413,12 +425,16 @@ void printUsage(const char* programName) {
     std::cout << "  --no-auto-commit               Force disable auto-commit for this run\n";
     std::cout << "  --commit-prefix <text>         Override commit message prefix\n";
     std::cout << "  --commit-include-prompt <bool> Include prompt summary in commits (true/false)\n";
+    std::cout << "  --cooldown                     Enable cooldown delay between prompts\n";
+    std::cout << "  --no-cooldown                  Disable cooldown delay between prompts\n";
+    std::cout << "  --cooldown-seconds <n>         Set cooldown delay duration (default: 60)\n";
     std::cout << "  --help                         Show this help message\n\n";
-    std::cout << "Auto-commit precedence: CLI flags > config file > defaults\n\n";
+    std::cout << "Precedence: CLI flags > config file > defaults\n\n";
     std::cout << "Examples:\n";
     std::cout << "  " << programName << " --reflect \"Build a simple calculator app\"\n";
     std::cout << "  " << programName << " --reflect \"Create a todo list\" --iterations 10\n";
     std::cout << "  " << programName << " --auto-commit --commit-prefix \"[AI]\"\n";
+    std::cout << "  " << programName << " --cooldown --cooldown-seconds 30\n";
     std::cout << "  " << programName << " --config ./my-config.txt\n";
 }
 
@@ -435,6 +451,10 @@ int main(int argc, char* argv[]) {
     std::optional<bool> cliAutoCommitEnabled;
     std::optional<std::string> cliCommitPrefix;
     std::optional<bool> cliCommitIncludePrompt;
+
+    // CLI overrides for cooldown
+    std::optional<bool> cliCooldownEnabled;
+    std::optional<int> cliCooldownSeconds;
 
     const int MAX_ITERATIONS = 100;  // Safety cap
 
@@ -511,6 +531,24 @@ int main(int argc, char* argv[]) {
                 std::cerr << "Error: --commit-include-prompt requires true or false" << std::endl;
                 return 1;
             }
+        } else if (arg == "--cooldown") {
+            cliCooldownEnabled = true;
+        } else if (arg == "--no-cooldown") {
+            cliCooldownEnabled = false;
+        } else if (arg == "--cooldown-seconds") {
+            if (i + 1 < argc) {
+                try {
+                    int seconds = std::stoi(argv[++i]);
+                    // Fall back to 60 if non-positive
+                    cliCooldownSeconds = (seconds > 0) ? seconds : 60;
+                } catch (...) {
+                    std::cerr << "Error: --cooldown-seconds requires a numeric argument" << std::endl;
+                    return 1;
+                }
+            } else {
+                std::cerr << "Error: --cooldown-seconds requires a numeric argument" << std::endl;
+                return 1;
+            }
         }
     }
 
@@ -533,9 +571,17 @@ int main(int argc, char* argv[]) {
     // Apply CLI overrides (these take precedence over config file)
     g_autoCommit.applyCliOverrides(cliAutoCommitEnabled, cliCommitPrefix, cliCommitIncludePrompt);
 
+    // Apply cooldown CLI overrides
+    applyCooldownCliOverrides(cliCooldownEnabled, cliCooldownSeconds);
+
     // Log effective auto-commit state
     if (g_autoCommit.isEnabled()) {
         std::cout << "[GemStack] Auto-commit is enabled" << std::endl;
+    }
+
+    // Log effective cooldown state
+    if (isCooldownEnabled()) {
+        std::cout << "[GemStack] Cooldown is enabled: " << getEffectiveCooldownSeconds() << " seconds between prompts" << std::endl;
     }
 
     std::cout << std::endl;

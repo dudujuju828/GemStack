@@ -31,7 +31,7 @@ target_link_libraries(GemStack PRIVATE GemStackCore)
 # Test executable
 enable_testing()
 
-add_executable(GemStackTests tests/test_parsing.cpp tests/test_git_auto_commit.cpp tests/test_multiline.cpp tests/test_process_executor.cpp)
+add_executable(GemStackTests tests/test_parsing.cpp tests/test_git_auto_commit.cpp tests/test_multiline.cpp tests/test_process_executor.cpp tests/test_cooldown.cpp)
 target_link_libraries(GemStackTests PRIVATE GemStackCore GTest::gtest_main)
 
 include(GoogleTest)

@@ -7,6 +7,8 @@
 #include <mutex>
 #include <condition_variable>
 #include <atomic>
+#include <functional>
+#include <optional>
 
 extern std::queue<std::string> commandQueue;
 extern std::mutex queueMutex;
@@ -21,7 +23,9 @@ struct GemStackConfig {
     std::string autoCommitMessagePrefix = "[GemStack]";
     bool autoCommitIncludePrompt = true;  // Include prompt summary in commit message
 
-    // Future config options can be added here
+    // Cooldown settings
+    bool cooldownEnabled = false;
+    int cooldownSeconds = 60;  // Default delay between prompts when cooldown is enabled
 };
 
 extern GemStackConfig g_config;
@@ -69,5 +73,31 @@ std::string readSessionLog();
 void appendToSessionLog(const std::string& promptSummary, bool success, const std::string& notes = "");
 void clearSessionLog();
 std::string buildSessionContext();
+
+// Cooldown management
+// Injectable sleeper function type for testing (seconds -> void)
+using SleeperFunction = std::function<void(int)>;
+
+// Default sleeper implementation using std::this_thread::sleep_for
+void defaultSleeper(int seconds);
+
+// Set a custom sleeper function (for testing)
+void setCooldownSleeper(SleeperFunction sleeper);
+
+// Reset to default sleeper
+void resetCooldownSleeper();
+
+// Perform cooldown delay if enabled
+// Returns true if cooldown was performed, false if skipped
+bool performCooldown();
+
+// Get the effective cooldown seconds (accounting for CLI overrides)
+int getEffectiveCooldownSeconds();
+
+// Check if cooldown is effectively enabled (accounting for CLI overrides)
+bool isCooldownEnabled();
+
+// Apply CLI overrides for cooldown settings
+void applyCooldownCliOverrides(std::optional<bool> enabled, std::optional<int> seconds);
 
 #endif // GEMSTACK_CORE_H
