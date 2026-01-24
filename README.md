@@ -1,101 +1,71 @@
 # GemStack
 
-GemStack is a C++ automation wrapper for the [Gemini CLI](https://github.com/google-gemini/gemini-cli). It enables the execution of sequential prompts and tasks ("tickets") via a queue system.
+GemStack is a C++ automation wrapper for the [Gemini CLI](https://github.com/google-gemini/gemini-cli). It executes sequential prompts ("tickets") via a queue system, enabling batch and interactive AI-driven workflows.
 
-The application allows users to define a series of commands in a file for batch processing, or to input commands interactively. This facilitates automated, high-volume interaction with the Gemini CLI.
-
-**Note:** GemStack automatically runs Gemini in `--yolo` mode, meaning it will auto-approve tool calls without user confirmation.
+**Note:** GemStack runs Gemini in `--yolo` mode (auto-approves tool calls).
 
 ## Features
 
-- **Batch Processing**: Execute a list of pre-defined tasks from a text file.
-- **Queue System**: Ensures sequential command execution for stable output.
-- **Interactive Mode**: Append commands to the processing queue during runtime.
-- **Reflective Mode**: AI continuously improves its work by generating its own follow-up prompts.
-- **Prompt Blocks**: Organize related prompts into logical blocks with `PromptBlockSTART`/`PromptBlockEND`.
-- **Style Guides**: Use `style` to define coding conventions that apply to all prompts in a block (optional).
-- **Specification Checkpoints**: Use `specify` to define expectations that are verified before each prompt executes.
-- **Session Log (AI Memory)**: Persistent log that tracks completed prompts and allows the AI to record notes for future reference.
-- **Gemini CLI Integration**: utilizes the underlying Node.js-based Gemini CLI for all AI interactions.
-- **Auto-Approval**: Runs in YOLO mode by default for uninterrupted automation.
-- **Automatic Model Fallback**: Automatically downgrades to a less capable model when rate limits are hit.
+- **Batch Processing** — Execute predefined tasks from `GemStackQueue.txt`
+- **Queue System** — Sequential command execution for stable output
+- **Interactive Mode** — Append commands during runtime
+- **Reflective Mode** — AI generates follow-up prompts iteratively
+- **Prompt Blocks** — Organize prompts with `goal`, `style`, and `specify` directives
+- **Session Log** — Persistent AI memory across prompts (`GemStackSessionLog.txt`)
+- **Auto-Commit** — Optional git commits after each prompt
+- **Model Fallback** — Auto-downgrades when rate-limited
 
 ## Prerequisites
 
-Ensure the following dependencies are installed:
-
-- **C++ Compiler** (C++20 compliant)
-- **CMake** (Version 3.20 or later)
-- **Node.js** (Required for the underlying Gemini CLI)
+- **C++ Compiler** (C++20)
+- **CMake** (3.20+)
+- **Node.js** (for Gemini CLI)
 - **Git**
 
 ## Quick Start
 
-After cloning the repository, run the build script to automatically set up everything:
-
-**Windows:**
-```powershell
-git clone --recurse-submodules https://github.com/dudujuju828/GemStack.git
-cd GemStack
-.\build.bat
-```
-
-**Linux/macOS:**
 ```bash
-git clone --recurse-submodules https://github.com/dudujuju828/GemStack.git
+git clone --recurse-submodules https://github.com/dudujuju28/GemStack.git
 cd GemStack
-chmod +x build.sh
-./build.sh
+
+# Windows
+.\build.bat
+
+# Linux/macOS
+chmod +x build.sh && ./build.sh
 ```
 
-The build script handles submodule initialization, Gemini CLI setup, and CMake configuration automatically.
+The build script handles submodule init, Gemini CLI setup, and CMake build.
 
-## Manual Installation
+### Manual Installation
 
-If you prefer to set up manually:
+```bash
+# 1. Clone with submodules
+git clone --recurse-submodules https://github.com/dudujuju28/GemStack.git
+cd GemStack
 
-1.  **Clone the Repository**
-    Clone the repository including submodules to ensure the Gemini CLI source is retrieved:
-    ```bash
-    git clone --recurse-submodules https://github.com/dudujuju828/GemStack.git
-    cd GemStack
-    ```
-    If the repository was cloned without submodules, initialize them manually:
-    ```bash
-    git submodule update --init --recursive
-    ```
+# 2. Build Gemini CLI
+cd gemini-cli && npm install && npm run build && cd ..
 
-2.  **Setup Gemini CLI**
-    Install dependencies and build the nested `gemini-cli`:
-    ```bash
-    cd gemini-cli
-    npm install
-    npm run build
-    cd ..
-    ```
-
-3.  **Build GemStack**
-    Configure and build the C++ application using CMake:
-    ```bash
-    cmake -B build -S .
-    cmake --build build
-    ```
+# 3. Build GemStack
+cmake -B build -S . && cmake --build build
+```
 
 ## Usage
 
-### Configuration: GemStackQueue.txt
+### Running GemStack
 
-The `GemStackQueue.txt` file defines the commands to be executed. Place this file in the same directory as the executable.
+```bash
+# Windows
+.\GemStack.exe
 
-#### Basic Syntax
-- **Structure**: Enclose all commands within a single `GemStackSTART` and `GemStackEND` block.
-- **Commands**: Each line inside the block is treated as a separate command to be executed.
-- **Strings**: Use quotes `"..."` for single-line strings, or braces `{{ ... }}` for multi-line strings.
-- **Blank Lines**: Empty lines are ignored.
+# Linux/macOS
+./GemStack
+```
 
-#### Basic Example
+GemStack processes `GemStackQueue.txt` in the current directory, then enters interactive mode.
 
-You can queue as many prompts or CLI arguments as needed within the block:
+### GemStackQueue.txt Syntax
 
 ```text
 GemStackSTART
@@ -105,650 +75,287 @@ prompt {{
   and compare it with unique_ptr
 }}
 --version
---help
 GemStackEND
 ```
 
----
+- Wrap commands in `GemStackSTART` / `GemStackEND`
+- Use `"..."` for single-line strings, `{{ ... }}` for multi-line
+- Each line is a separate command
 
-### Prompt Blocks, Style Guides, and the `specify` Directive
+### Prompt Blocks with Goals, Styles, and Specifications
 
-GemStack supports **Prompt Blocks**, **Style Guides**, and **Specification Checkpoints** for more structured, reliable automation workflows.
-
-#### Overview
-
-When building complex projects with multiple sequential prompts, it's important to:
-- Maintain consistent coding conventions across all generated code
-- Verify that each step completed correctly before proceeding
-
-The `style` directive allows you to define **coding conventions and style guidelines** that the AI follows throughout the block. The `specify` directive allows you to define **expectations** that must be verified before the next prompt executes.
-
-#### Syntax
-
-| Directive | Description |
-|-----------|-------------|
-| `PromptBlockSTART` | Marks the beginning of a prompt block |
-| `PromptBlockEND` | Marks the end of a prompt block |
-| `goal "..."` | High-level objective for the block (one per block) |
-| `style "..."` | Coding conventions to follow throughout the block (optional, can have multiple) |
-| `specify "..."` | Defines an expectation to verify before the next prompt |
-| `prompt "..."` | A task for the AI to execute |
-
-#### How It Works
-
-1. **Prompt Blocks**: Group related prompts together using `PromptBlockSTART` and `PromptBlockEND`. This provides logical organization and resets all state (goal, styles, specifications) between blocks.
-
-2. **Goals**: Each prompt block can have one `goal "..."` statement that describes the high-level objective or final product for that block. The goal is prepended to **every** prompt in the block, giving the AI consistent context about what it's ultimately working towards.
-
-3. **Style Guides**: When you add `style "..."` statements in a block, they are prepended to **every** prompt in that block. Unlike specifications, styles persist throughout the entire block—they're not cleared after each prompt. This ensures consistent coding conventions across all prompts.
-
-4. **Specifications**: When you add `specify "..."` statements between prompts, they accumulate and are automatically prepended to the **next** prompt as verification checkpoints. Specifications are cleared after each prompt.
-
-5. **Verification Checkpoints**: When a prompt has pending specifications, GemStack transforms it into a verification-first task:
-   - The AI first checks if all specified expectations are met
-   - If any expectation is NOT met, the AI fixes the issues first
-   - Only after verification does the AI proceed with the actual task
-
-#### Example with Goal, Styles, and Specifications
+Organize related prompts and enforce consistency:
 
 ```text
 GemStackSTART
 
 PromptBlockSTART
-goal "A modern React website with responsive Header and Footer components using TypeScript and CSS modules"
+goal "A React app with Header and Footer components"
 
-style "Use functional components with TypeScript interfaces for props"
-style "Follow BEM naming convention for CSS classes"
-style "Use 2-space indentation and single quotes for strings"
+style "Use TypeScript with functional components"
+style "Follow BEM naming for CSS"
 
-prompt "Initialize a new React project with TypeScript called 'my-app'"
+prompt "Initialize React project with TypeScript"
 
-specify "The 'my-app' folder should exist with package.json containing React and TypeScript"
-prompt "Create a Header component with a navigation menu"
+specify "my-app folder exists with package.json"
+prompt "Create Header component with navigation"
 
-specify "A Header component should exist in src/components/Header.tsx"
-specify "The Header should include a navigation element with at least 3 links"
-prompt "Add responsive styling using CSS modules"
-
-specify "Header.module.css should exist with responsive breakpoints"
-prompt "Create a Footer component that matches the Header styling"
+specify "Header.tsx exists in src/components"
+prompt "Add responsive CSS modules"
 PromptBlockEND
 
 GemStackEND
 ```
 
-#### What Happens Internally
-
-When the above queue is processed, the **first** prompt (which has goal and styles but no specifications) is transformed into:
-
-```
-GOAL - The ultimate objective you are working towards:
-  A modern React website with responsive Header and Footer components using TypeScript and CSS modules
-
-STYLE GUIDE - Follow these coding conventions and style guidelines:
-  1. Use functional components with TypeScript interfaces for props
-  2. Follow BEM naming convention for CSS classes
-  3. Use 2-space indentation and single quotes for strings
-
-CURRENT TASK:
-Initialize a new React project with TypeScript called 'my-app'
-```
-
-The **second** prompt receives the goal, styles, and a verification checkpoint:
-
-```
-GOAL - The ultimate objective you are working towards:
-  A modern React website with responsive Header and Footer components using TypeScript and CSS modules
-
-STYLE GUIDE - Follow these coding conventions and style guidelines:
-  1. Use functional components with TypeScript interfaces for props
-  2. Follow BEM naming convention for CSS classes
-  3. Use 2-space indentation and single quotes for strings
-
-CHECKPOINT - Before proceeding, verify the following expectations are met.
-If any are NOT correct, fix them first and explain what was missing:
-  1. The 'my-app' folder should exist with package.json containing React and TypeScript
-
-After verification is complete, proceed with the following task:
-Create a Header component with a navigation menu
-```
-
-The **third** prompt receives the goal, styles, and two verification checkpoints:
-
-```
-GOAL - The ultimate objective you are working towards:
-  A modern React website with responsive Header and Footer components using TypeScript and CSS modules
-
-STYLE GUIDE - Follow these coding conventions and style guidelines:
-  1. Use functional components with TypeScript interfaces for props
-  2. Follow BEM naming convention for CSS classes
-  3. Use 2-space indentation and single quotes for strings
-
-CHECKPOINT - Before proceeding, verify the following expectations are met.
-If any are NOT correct, fix them first and explain what was missing:
-  1. A Header component should exist in src/components/Header.tsx
-  2. The Header should include a navigation element with at least 3 links
-
-After verification is complete, proceed with the following task:
-Add responsive styling using CSS modules
-```
-
-Note how the **style guides persist** across all prompts in the block, ensuring consistent conventions.
-
-#### Multiple Prompt Blocks
-
-You can define multiple prompt blocks for different phases of a project, each with its own goal:
-
-```text
-GemStackSTART
-
-PromptBlockSTART
-goal "A fully configured project with CMake build system and organized folder structure"
-prompt "Set up the project infrastructure"
-specify "Project should have proper folder structure"
-prompt "Configure the build system"
-PromptBlockEND
-
-PromptBlockSTART
-goal "A working core module with comprehensive unit test coverage"
-prompt "Implement the core features"
-specify "Core module should be functional"
-prompt "Add unit tests for core features"
-PromptBlockEND
-
-PromptBlockSTART
-goal "Complete API documentation with auto-generated reference docs"
-prompt "Add documentation"
-specify "All public APIs should be documented"
-prompt "Generate API reference docs"
-PromptBlockEND
-
-GemStackEND
-```
-
-#### Best Practices for `goal`
-
-1. **Describe the Final Product**: Focus on what should exist at the end of the block
-   - Good: `goal "A responsive dashboard with real-time data visualization and user authentication"`
-   - Vague: `goal "Make a good website"`
-
-2. **Keep It High-Level**: The goal provides context, not step-by-step instructions
-   - Good: `goal "A RESTful API with CRUD operations for users, posts, and comments"`
-   - Too detailed: `goal "Create routes at /users, /posts, /comments with GET, POST, PUT, DELETE methods..."`
-
-3. **One Goal Per Block**: If you need different goals, use separate prompt blocks
-
-#### Best Practices for `style`
-
-1. **Define Early**: Place style directives at the beginning of a block, before any prompts
-   - Styles apply to all prompts in the block, so define them upfront
-
-2. **Be Specific About Conventions**: Clearly state coding standards
-   - Good: `style "Use camelCase for variables and PascalCase for components"`
-   - Good: `style "All functions must have JSDoc comments with @param and @returns"`
-   - Vague: `style "Write good code"`
-
-3. **Cover Multiple Aspects**: Use separate style directives for different concerns
-   - `style "Use TypeScript strict mode with explicit return types"`
-   - `style "Follow Airbnb ESLint rules for formatting"`
-   - `style "Use CSS modules with BEM naming convention"`
-
-4. **Language-Specific Guidelines**: Tailor styles to your tech stack
-   - React: `style "Use functional components with hooks, no class components"`
-   - Python: `style "Follow PEP 8, use type hints, docstrings in Google format"`
-   - Go: `style "Use standard library conventions, error wrapping with fmt.Errorf"`
-
-5. **Optional Usage**: Style guides are completely optional—use them when consistency matters
-   - Great for team projects with established conventions
-   - Useful when generating multiple related components
-
-#### Best Practices for `specify`
-
-1. **Be Specific**: Write clear, verifiable expectations
-   - Good: `specify "The UserService class should have a 'login' method that returns a Promise<User>"`
-   - Vague: `specify "The code should work"`
-
-2. **Keep It Focused**: Each `specify` should check one thing
-   - Good: Use multiple `specify` statements for multiple checks
-   - Avoid: Combining many checks into one long specification
-
-3. **Check Artifacts**: Verify files, functions, or structures exist
-   - `specify "package.json should include 'jest' as a devDependency"`
-   - `specify "The API endpoint /users should return a JSON array"`
-
-4. **Validate Behavior**: Describe expected functionality
-   - `specify "The login form should display an error message for invalid credentials"`
-   - `specify "The responsive layout should switch to single column below 768px"`
-
-#### Warnings and Edge Cases
-
-- **Multiple Goals**: If you define more than one `goal` in a block, GemStack will warn you and use the last one
-- **Unused Specifications**: If `specify` statements appear at the end of a block (with no following prompt), GemStack will warn you
-- **Block Boundaries**: Goals, styles, and specifications don't carry across `PromptBlockEND` boundaries—they all reset at each block start
-- **Backwards Compatibility**: If you don't use `PromptBlockSTART`/`PromptBlockEND`, prompts work exactly as before
-- **Goal/Style Without Prompts**: A `goal` or `style` without any `prompt` in the block has no effect
-- **Style Persistence**: Unlike `specify` (which clears after each prompt), `style` directives persist for all prompts in the block
-
----
-
-### Generating a GemStackQueue with AI
-
-You can use any AI assistant (ChatGPT, Claude, Gemini, etc.) to generate a complete `GemStackQueue.txt` file for your project. Simply copy the boilerplate prompt below, fill in your project description, and paste it into your preferred AI.
-
-#### Boilerplate Prompt
-
-Copy and paste this prompt into any AI, replacing `[YOUR PROJECT DESCRIPTION]` with your specific requirements:
-
-```
-I need you to generate a GemStackQueue.txt file for the following project:
-
-[YOUR PROJECT DESCRIPTION]
-
-GemStack is an automation tool that executes sequential AI prompts. Generate a complete queue file using this format:
-
-SYNTAX RULES:
-- Wrap everything in GemStackSTART and GemStackEND
-- Use PromptBlockSTART/PromptBlockEND to group related phases
-- Use goal "..." once per block to describe the high-level objective
-- Use style "..." to define coding conventions (optional, can have multiple per block)
-- Use prompt "..." for tasks the AI should execute
-- Use specify "..." BETWEEN prompts to define checkpoints that verify the previous work before proceeding
-
-STRUCTURE:
-1. Each PromptBlock should have one goal describing the final product for that phase
-2. Optionally add style directives at the start of the block for coding conventions
-3. Each prompt should be a single, focused task
-4. After each prompt, add 1-3 specify statements describing what should exist/be true after that prompt completes
-5. The goal, styles, and specify statements will be prepended to each prompt as context and verification checkpoints
-6. Break the project into logical phases using PromptBlockSTART/PromptBlockEND
-
-EXAMPLE OUTPUT FORMAT:
-GemStackSTART
-
-PromptBlockSTART
-goal "Description of what this phase should ultimately produce"
-style "Use TypeScript with strict mode enabled"
-style "Follow component naming convention: PascalCase for components, camelCase for functions"
-
-prompt "First task description"
-
-specify "Expected outcome 1 from first task"
-specify "Expected outcome 2 from first task"
-prompt "Second task that builds on the first"
-
-specify "What should exist after second task"
-prompt "Third task"
-PromptBlockEND
-
-PromptBlockSTART
-goal "Description of next phase's final product"
-style "Maintain consistent error handling patterns"
-
-prompt "Next phase task"
-
-specify "Verification for next phase"
-prompt "Final task in this phase"
-PromptBlockEND
-
-GemStackEND
-
-GUIDELINES:
-- Be specific in prompts - include file names, technologies, and exact requirements
-- Use style directives to enforce coding conventions across all prompts in a block
-- Specify statements should be verifiable (file exists, function works, component renders)
-- Start with project setup/initialization
-- Progress logically: setup → core features → styling → testing → polish
-- Each PromptBlock should represent a distinct phase (e.g., "Backend Setup", "Frontend Components", "Testing")
-
-Now generate the complete GemStackQueue.txt for my project.
-```
-
-#### Example: Portfolio Website
-
-**Input to AI:**
-```
-I need you to generate a GemStackQueue.txt file for the following project:
-
-A modern portfolio website for a software developer. Should include:
-- Next.js with TypeScript and Tailwind CSS
-- Home page with hero section and brief intro
-- Projects section with filterable grid
-- About page with skills and experience
-- Contact form with validation
-- Dark mode toggle
-- Responsive design
-
-[rest of boilerplate prompt...]
-```
-
-**AI generates a complete GemStackQueue.txt** with proper prompts, specify checkpoints, and logical phase organization.
-
-#### Tips for Better Results
-
-1. **Be Detailed**: The more specific your project description, the better the generated queue
-2. **Mention Technologies**: Specify frameworks, languages, and tools you want to use
-3. **List Features**: Enumerate all features you want in the final product
-4. **Include Constraints**: Mention any specific requirements (accessibility, performance, etc.)
-5. **Iterate**: Run the generated queue, then ask the AI to generate additional phases if needed
-
----
-
-### Execution
-
-The executable is built directly in the project root directory for convenience.
-
-**Windows:**
-```powershell
-.\GemStack.exe
-```
-
-**Linux/macOS:**
-```bash
-./GemStack
-```
-
-**Note:** GemStack runs in the current directory. The AI has access to read and write files in the directory from which you run the application.
-
-### Modes of Operation
-
-1.  **Batch Mode**: Upon launch, GemStack immediately processes all commands found in `GemStackQueue.txt`.
-2.  **Interactive Mode**: Users can manually type commands into the console to append them to the queue.
-3.  **Reflective Mode**: AI iteratively improves its work by generating follow-up prompts (see below).
-4.  **Termination**: The application will automatically exit after processing all file-based commands. In interactive mode, type `exit` or `quit` to close the application.
+| Directive | Purpose |
+|-----------|---------|
+| `PromptBlockSTART/END` | Group related prompts; resets state between blocks |
+| `goal "..."` | High-level objective prepended to all prompts in block |
+| `style "..."` | Coding conventions prepended to all prompts (persists) |
+| `specify "..."` | Checkpoint verified before next prompt (clears after use) |
+| `prompt "..."` | Task for AI to execute |
+
+**Behavior:** Goals and styles are prepended to every prompt. Specifications become verification checkpoints that the AI must confirm before proceeding.
 
 ### Reflective Mode
 
-Reflective mode enables autonomous, iterative development where the AI continuously improves its work by asking itself what to do next.
+AI iteratively improves work by generating its own follow-up prompts:
 
-**Usage:**
-```powershell
-# Windows
-.\GemStack.exe --reflect "Your initial prompt here"
-
-# With custom iteration limit (default is 5)
+```bash
 .\GemStack.exe --reflect "Build a calculator app" --iterations 10
 ```
 
-```bash
-# Linux/macOS
-./GemStack --reflect "Your initial prompt here"
-./GemStack --reflect "Build a calculator app" --iterations 10
-```
+Each iteration asks: "What's the most impactful next step?" and executes the AI's response.
 
-**How it works:**
-1. GemStack executes your initial prompt
-2. After completion, it asks the AI: "What is the single most impactful next step to improve or extend this work?"
-3. The AI's response becomes the next prompt
-4. This cycle repeats until the iteration limit is reached
+### Command Line Options
 
-**Example:**
-```powershell
-.\GemStack.exe --reflect "Create a basic HTML webpage with a greeting" --iterations 3
-```
-
-This might produce iterations like:
-- Iteration 1: Creates the basic HTML page
-- Iteration 2: AI decides to add CSS styling
-- Iteration 3: AI decides to add JavaScript interactivity
-
-**Command Line Options:**
 | Option | Description |
 |--------|-------------|
-| `--reflect <prompt>` | Activate reflective mode with the given initial prompt |
-| `--iterations <n>` | Set maximum iterations (default: 5) |
-| `--config <path>` | Load configuration from specified file path |
-| `--auto-commit` | Force enable auto-commit for this run |
-| `--no-auto-commit` | Force disable auto-commit for this run |
-| `--commit-prefix <text>` | Override commit message prefix for this run |
-| `--commit-include-prompt <bool>` | Include prompt summary in commits (`true`/`false`) |
-| `--help` | Display help message |
+| `--reflect <prompt>` | Enable reflective mode with initial prompt |
+| `--iterations <n>` | Max reflective iterations (default: 5) |
+| `--config <path>` | Load config from specified path |
+| `--auto-commit` | Enable git auto-commit for this run |
+| `--no-auto-commit` | Disable git auto-commit for this run |
+| `--commit-prefix <text>` | Override commit message prefix |
+| `--help` | Show help |
 
----
+## Configuration
 
-### Configuration: GemStackConfig.txt
-
-GemStack supports an optional configuration file (`GemStackConfig.txt`) that allows you to customize behavior. This file is **not required** to run GemStack—if it doesn't exist, defaults will be used.
-
-Place `GemStackConfig.txt` in the same directory as the executable.
-
-#### Configuration Format
-
-The configuration file uses a simple `key=value` format. Comments start with `#` or `;`.
+Optional `GemStackConfig.txt` in the executable directory:
 
 ```ini
-# GemStack Configuration File
-# All settings are optional - defaults are used if not specified
-
 # Auto-commit settings
 autoCommitEnabled=true
 autoCommitMessagePrefix=[GemStack]
 autoCommitIncludePrompt=true
 ```
 
-#### Available Settings
+**Precedence:** CLI flags > Config file > Defaults
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `autoCommitEnabled` | `false` | Enable automatic git commits after each prompt |
-| `autoCommitMessagePrefix` | `[GemStack]` | Prefix for auto-commit messages |
-| `autoCommitIncludePrompt` | `true` | Include a summary of the prompt in commit messages |
+### Auto-Commit
 
-**Alternative key formats:** You can also use snake_case versions (e.g., `auto_commit_enabled`).
+Creates a git commit after each successful prompt for traceability and rollback.
 
-#### Precedence
+```bash
+# Enable via CLI
+.\GemStack.exe --auto-commit
 
-Settings can come from multiple sources. GemStack applies them in this order (highest priority first):
-
-1. **CLI flags** (`--auto-commit`, `--commit-prefix`, etc.) — always win
-2. **Config file** (`GemStackConfig.txt` or path specified via `--config`)
-3. **Defaults** — auto-commit disabled, prefix `[GemStack]`, include prompt `true`
-
-This means you can have auto-commit disabled in your config file but override it for a single run with `--auto-commit`.
-
----
-
-### Auto-Commit Feature
-
-The auto-commit feature creates a git commit after each successful prompt execution. This provides a traceable history of all AI-driven changes, which is valuable for high-autonomy automation workflows.
-
-#### Why Use Auto-Commit?
-
-- **Traceability**: Every AI action is recorded as a separate commit
-- **Rollback**: Easily revert specific changes if needed
-- **Audit Trail**: Clear history of what the AI did at each step
-- **Debugging**: Identify which prompt introduced a bug or unwanted change
-
-#### Enabling Auto-Commit
-
-**Option 1: Via config file**
-
-Create a `GemStackConfig.txt` file with:
-
-```ini
+# Or via config
 autoCommitEnabled=true
 ```
 
-**Option 2: Via CLI flag (no config file needed)**
-
-```powershell
-.\GemStack.exe --auto-commit
-```
-
-**Option 3: Custom config file path**
-
-```powershell
-.\GemStack.exe --config ./configs/production.txt
-```
-
-#### Example Workflow
-
-1. Create your configuration file:
-   ```ini
-   # GemStackConfig.txt
-   autoCommitEnabled=true
-   autoCommitMessagePrefix=[GemStack]
-   autoCommitIncludePrompt=true
-   ```
-
-2. Run GemStack with your prompts:
-   ```powershell
-   .\GemStack.exe
-   ```
-
-3. After each prompt, if changes were made, a commit is automatically created:
-   ```
-   [GemStack] Auto-committing changes...
-   [GemStack] Auto-commit successful: [GemStack] Create a Header component with navigation
-   ```
-
-4. View your commit history:
-   ```bash
-   git log --oneline
-   # a1b2c3d [GemStack] Create a Header component with navigation
-   # e4f5g6h [GemStack] Initialize a new React project with TypeScript
-   ```
-
-#### Commit Message Format
-
-Auto-commit messages follow this format:
-```
-<prefix> <prompt summary>
-```
-
-For example:
-- `[GemStack] Create a login form with validation`
-- `[GemStack] Add unit tests for the UserService class`
-- `[GemStack] Fix the responsive layout for mobile devices`
-
-#### CLI Override Examples
-
-**Enable auto-commit for a single run (config file has it disabled):**
-```powershell
-.\GemStack.exe --auto-commit --reflect "Build a calculator"
-```
-
-**Disable auto-commit for a single run (config file has it enabled):**
-```powershell
-.\GemStack.exe --no-auto-commit
-```
-
-**Custom prefix and include prompt setting:**
-```powershell
-.\GemStack.exe --auto-commit --commit-prefix "[AI-Build]" --commit-include-prompt false
-```
-
-#### Commit Message Hygiene
-
-Auto-commit messages are sanitized to ensure clean git history:
-
-- **Single-line subject**: Newlines and tabs in prompt summaries are replaced with spaces
-- **Whitespace normalization**: Multiple consecutive spaces are collapsed to one
-- **Length cap**: Subject line is capped at 72 characters (including prefix); longer summaries are truncated with `...`
-
-Example transformation:
-- Prompt: `"Create a\nmulti-line\tdescription with   extra spaces"`
-- Commit message: `[GemStack] Create a multi-line description with extra sp...`
-
-#### Behavior Notes
-
-- **No changes detected**: If a prompt doesn't result in file changes, no commit is created
-- **Non-git directories**: Auto-commit is silently skipped if not in a git repository
-- **Failed prompts**: No commit is created for failed prompt executions
-- **Reflective mode**: Each iteration in reflective mode creates its own commit
-- **CLI precedence**: `--auto-commit` and `--no-auto-commit` always override config file settings
-
----
+Commits are formatted as: `[GemStack] <prompt summary>` (truncated to 72 chars).
 
 ### Session Log (AI Memory)
 
-GemStack maintains a **session log** (`GemStackSessionLog.txt`) that provides the AI with persistent memory across prompts. This enables the AI to know what it has already done and avoid repeating work.
-
-#### How It Works
-
-1. **Before each prompt**: GemStack reads the session log and prepends its contents to the prompt, giving the AI full context of all previous actions in the session.
-
-2. **After each prompt**: GemStack automatically appends an entry to the session log recording:
-   - Timestamp
-   - Success/failure status
-   - Summary of the prompt executed
-
-3. **AI can write to the log**: The AI is instructed that it can append critical details, decisions, and notes to `GemStackSessionLog.txt`. This allows the AI to record important information for future prompts to reference.
-
-#### What the AI Sees
-
-Each prompt is automatically augmented with session context:
+`GemStackSessionLog.txt` tracks completed prompts and allows AI to record notes:
 
 ```
-SESSION LOG - You can write critical details, decisions, and notes to 'GemStackSessionLog.txt' by appending to it. This file persists across prompts and helps you remember what you have done.
-
-PREVIOUS SESSION HISTORY (from GemStackSessionLog.txt):
----
-[2024-01-15 10:30:00] [SUCCESS] Initialize a new React project with TypeScript
-[2024-01-15 10:32:15] [SUCCESS] Create a Header component with navigation
----
-Review this history to understand what has been completed. Do not repeat completed work.
-
-[Your actual prompt content here...]
+[2024-01-15 10:30:00] [SUCCESS] Initialize React project
+[2024-01-15 10:32:15] [SUCCESS] Create Header component
 ```
 
-#### Use Cases
+The log is prepended to each prompt so AI knows what's been done. Clear it between projects:
 
-- **Long automation sessions**: The AI can track what it has built and what remains
-- **Error recovery**: If a prompt fails, the AI sees the failure recorded and can adjust
-- **Complex projects**: The AI can record architectural decisions, file locations, or important notes for later prompts
-- **Debugging**: Review `GemStackSessionLog.txt` to see exactly what happened during a session
-
-#### AI-Written Notes
-
-The AI can append its own notes to the session log during execution. For example, if the AI discovers something important, it might write:
-
-```
-[2024-01-15 10:35:00] [NOTE] Database schema uses UUID primary keys - remember for future queries
-[2024-01-15 10:35:00] [NOTE] API base URL configured in src/config/api.ts
+```bash
+rm GemStackSessionLog.txt  # or: del GemStackSessionLog.txt
 ```
 
-This information will then be visible to the AI in subsequent prompts.
+## Testing
 
-#### Starting a Fresh Session
+GemStack uses [GoogleTest](https://github.com/google/googletest) for unit testing.
 
-The session log persists between GemStack runs. To start a fresh session:
+### Running Tests
 
-**Option 1: Delete the file**
-```powershell
-# Windows
-del GemStackSessionLog.txt
+```bash
+# Build (includes tests)
+cmake -B build -S .
+cmake --build build
 
+# Run all tests
+cd build && ctest --output-on-failure
+
+# Or run test executable directly
+./GemStackTests        # Linux/macOS
+.\GemStackTests.exe    # Windows
+
+# Run specific test
+./GemStackTests --gtest_filter="ParsingTest.*"
+```
+
+### Test Files
+
+| File | Coverage |
+|------|----------|
+| `tests/test_parsing.cpp` | Queue file parsing |
+| `tests/test_multiline.cpp` | Multi-line string handling |
+| `tests/test_git_auto_commit.cpp` | Git auto-commit logic |
+| `tests/test_process_executor.cpp` | Process execution |
+
+## Repository Structure
+
+```
+GemStack/
+├── src/                    # C++ source files
+│   ├── main.cpp           # Entry point, CLI parsing, queue orchestration
+│   ├── GemStackCore.cpp   # Core queue/parsing logic, utilities
+│   ├── CliManager.cpp     # Gemini CLI extraction and path management
+│   ├── ConsoleUI.cpp      # Progress display and status animations
+│   ├── GitAutoCommit.cpp  # Auto-commit functionality
+│   └── ProcessExecutor.cpp # Cross-platform command execution
+├── include/                # Header files
+│   ├── GemStackCore.h
+│   ├── CliManager.h
+│   ├── ConsoleUI.h
+│   ├── GitAutoCommit.h
+│   ├── ProcessExecutor.h
+│   └── EmbeddedCli.h      # Embedded Gemini CLI binary (generated)
+├── tests/                  # GoogleTest unit tests
+├── gemini-cli/             # Gemini CLI submodule
+├── build/                  # CMake build output (generated)
+├── CMakeLists.txt          # CMake configuration
+├── build.bat               # Windows build script
+├── build.sh                # Linux/macOS build script
+├── embed_cli.py            # Generates EmbeddedCli.h from gemini-cli
+├── GemStackQueue.txt       # Example queue file
+└── README.md
+```
+
+## Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         main.cpp                                │
+│   Entry point, CLI args, queue orchestration, reflective mode   │
+└─────────────────────────────────────────────────────────────────┘
+                                │
+                                ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                      GemStackCore                               │
+│   Queue management, file parsing, config loading, utilities     │
+│   - loadCommandsFromFile()  - Model fallback system             │
+│   - Session log management  - String/path utilities             │
+└─────────────────────────────────────────────────────────────────┘
+        │              │              │              │
+        ▼              ▼              ▼              ▼
+┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
+│  CliManager  │ │  ConsoleUI   │ │GitAutoCommit │ │ProcessExecutor│
+│  CLI extract │ │  Progress    │ │  Git commits │ │  Run commands │
+│  & paths     │ │  & status    │ │  after tasks │ │  capture out  │
+└──────────────┘ └──────────────┘ └──────────────┘ └──────────────┘
+        │
+        ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                     gemini-cli (Node.js)                        │
+│         Actual Gemini API interactions (submodule)              │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Data Flow:**
+1. `main.cpp` parses CLI args and loads queue from `GemStackQueue.txt`
+2. `GemStackCore` parses directives, manages queue, handles model fallback
+3. Commands execute via `ProcessExecutor` calling `gemini-cli`
+4. `ConsoleUI` displays progress; `GitAutoCommit` commits changes
+5. Session log updated; next command processed
+
+## API Key / Credentials Setup
+
+GemStack uses the Gemini CLI for AI interactions. Configure credentials via Gemini CLI's standard methods:
+
+### Option 1: Environment Variable (Recommended)
+
+```bash
 # Linux/macOS
-rm GemStackSessionLog.txt
+export GEMINI_API_KEY="your-api-key-here"
+
+# Windows PowerShell
+$env:GEMINI_API_KEY="your-api-key-here"
+
+# Windows CMD
+set GEMINI_API_KEY=your-api-key-here
 ```
 
-**Option 2: Clear the file contents**
-```powershell
-# Windows
-echo. > GemStackSessionLog.txt
+### Option 2: Gemini CLI Login
 
-# Linux/macOS
-> GemStackSessionLog.txt
+```bash
+cd gemini-cli
+npx gemini login
 ```
 
-#### Session Log Format
+This opens a browser for Google OAuth authentication.
 
-Each automatic entry follows this format:
-```
-[YYYY-MM-DD HH:MM:SS] [SUCCESS|FAILED] <prompt summary> | Notes: <optional notes>
+### Getting an API Key
+
+1. Go to [Google AI Studio](https://aistudio.google.com/apikey)
+2. Create or select a project
+3. Generate an API key
+4. Set it via environment variable or CLI login
+
+## Troubleshooting
+
+### Build fails: "CMake version too old"
+Upgrade CMake to 3.20+. Download from [cmake.org](https://cmake.org/download/).
+
+### Build fails: "C++20 not supported"
+Update your compiler. GCC 10+, Clang 10+, or MSVC 2019+ required.
+
+### "gemini-cli not found" or empty submodule
+```bash
+git submodule update --init --recursive
+cd gemini-cli && npm install && npm run build
 ```
 
-Example session log:
-```
-[2024-01-15 10:30:00] [SUCCESS] Initialize a new React project with TypeScript
-[2024-01-15 10:32:15] [SUCCESS] Create a Header component with navigation
-[2024-01-15 10:35:00] [FAILED] Add unit tests for Header | Notes: Exit code: 1
-[2024-01-15 10:36:30] [SUCCESS] Fix Header component and add unit tests
+### Rate limit errors / model exhaustion
+GemStack auto-downgrades models. If all models exhausted, wait and retry, or check your API quota at [Google AI Studio](https://aistudio.google.com/).
+
+### Commands not executing
+- Verify `GemStackQueue.txt` syntax (must have `GemStackSTART`/`GemStackEND`)
+- Check file is in same directory as executable
+- Run with sample queue to test
+
+### Permission denied (Linux/macOS)
+```bash
+chmod +x GemStack build.sh
 ```
 
-#### Best Practices
+## Contributing
 
-1. **Clear between projects**: Start each new project with a fresh session log
-2. **Review the log**: Check `GemStackSessionLog.txt` if you need to understand what happened
-3. **Leverage AI notes**: Instruct the AI in your prompts to record specific information if needed
-4. **Combine with auto-commit**: Use both features together for maximum traceability
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+**Quick start:**
+1. Fork the repository
+2. Create a feature branch: `git checkout -b feature/my-feature`
+3. Make changes with tests
+4. Submit a pull request
+
+## Code Style
+
+- **Standard:** C++20
+- **Naming:** `camelCase` for functions/variables, `PascalCase` for classes/structs
+- **Headers:** Use `#pragma once` or include guards
+- **Formatting:** 4-space indentation, braces on same line
+- **No external linter configured** — follow existing code patterns
+
+## License
+
+This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
